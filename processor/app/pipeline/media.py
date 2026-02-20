@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -133,9 +134,11 @@ class MediaProcessor:
             device=device,
             compute_type=self.whisper_compute_type,
         )
+        logger.info("Transcription heartbeat started: audio=%s interval_seconds=30", audio_path)
         segments, info = model.transcribe(str(audio_path), vad_filter=True, word_timestamps=False)
 
         out_segments: list[dict] = []
+        last_beat = time.monotonic()
         for seg in segments:
             out_segments.append(
                 {
@@ -144,6 +147,15 @@ class MediaProcessor:
                     "text": seg.text.strip(),
                 }
             )
+            now = time.monotonic()
+            if now - last_beat >= 30:
+                logger.info(
+                    "Transcription heartbeat: audio=%s collected_segments=%d last_end=%.2f",
+                    audio_path,
+                    len(out_segments),
+                    float(seg.end),
+                )
+                last_beat = now
 
         return {
             "language": getattr(info, "language", None),
@@ -177,10 +189,27 @@ class MediaProcessor:
         if ocr_engine is None:
             return ""
 
+        logger.info(
+            "Slide OCR inference started: media=%s unique_frames=%d interval_seconds=30",
+            media_path,
+            len(unique_frames),
+        )
+        processed_frames = 0
+        last_beat = time.monotonic()
         for frame_path in unique_frames:
             try:
                 result = ocr_engine.ocr(str(frame_path), cls=True)
+                processed_frames += 1
                 if not result:
+                    now = time.monotonic()
+                    if now - last_beat >= 30:
+                        logger.info(
+                            "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d",
+                            media_path,
+                            processed_frames,
+                            len(texts),
+                        )
+                        last_beat = now
                     continue
                 lines: list[str] = []
                 for item in result[0] or []:
@@ -189,12 +218,27 @@ class MediaProcessor:
                         lines.append(txt)
                 if lines:
                     texts.append(" ".join(lines))
+                now = time.monotonic()
+                if now - last_beat >= 30:
+                    logger.info(
+                        "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d",
+                        media_path,
+                        processed_frames,
+                        len(texts),
+                    )
+                    last_beat = now
             except Exception as exc:  # noqa: BLE001
                 logger.warning("OCR failed for %s: %s", frame_path, exc)
 
         return "\n".join(texts)
 
     def _sample_frames(self, media_path: Path, frames_dir: Path) -> None:
+        logger.info(
+            "Slide OCR frame sampling started: media=%s fps=%.3f output_dir=%s",
+            media_path,
+            self.ocr_fps,
+            frames_dir,
+        )
         cmd = [
             "ffmpeg",
             "-y",
