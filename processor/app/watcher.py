@@ -4,6 +4,7 @@ import logging
 import queue
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
@@ -15,8 +16,15 @@ from app.storage.state import StateStore
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class QueueItem:
+    path: Path
+    force: bool = False
+    source: str = "watch"
+
+
 class WatchHandler(FileSystemEventHandler):
-    def __init__(self, ingest_queue: queue.Queue[Path], supported_ext: set[str]) -> None:
+    def __init__(self, ingest_queue: queue.Queue[QueueItem], supported_ext: set[str]) -> None:
         self.ingest_queue = ingest_queue
         self.supported_ext = supported_ext
 
@@ -25,7 +33,7 @@ class WatchHandler(FileSystemEventHandler):
             return
         path = Path(event.src_path)
         if path.suffix.lower() in self.supported_ext:
-            self.ingest_queue.put(path)
+            self.ingest_queue.put(QueueItem(path=path, force=False, source="watch"))
             logger.info(
                 "Detected new file in watch dir: path=%s ext=%s queued=true queue_size=%d",
                 path,
@@ -54,7 +62,7 @@ class WatchService:
         self.state_store = state_store
         self.supported_extensions = {e.lower() for e in supported_extensions}
         self.poll_interval_seconds = poll_interval_seconds
-        self.ingest_queue: queue.Queue[Path] = queue.Queue()
+        self.ingest_queue: queue.Queue[QueueItem] = queue.Queue()
         self.observer: Observer | None = None
         self.worker_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
@@ -81,11 +89,12 @@ class WatchService:
         if self.worker_thread:
             self.worker_thread.join(timeout=5)
 
-    def enqueue_path(self, path: Path) -> None:
-        self.ingest_queue.put(path)
+    def enqueue_path(self, path: Path, force: bool = False) -> None:
+        self.ingest_queue.put(QueueItem(path=path, force=force, source="api"))
         logger.info(
-            "File queued via API/manual enqueue: path=%s queue_size=%d",
+            "File queued via API/manual enqueue: path=%s force=%s queue_size=%d",
             path,
+            force,
             self.ingest_queue.qsize(),
         )
 
@@ -94,7 +103,7 @@ class WatchService:
         for path in self.watch_dir.rglob("*"):
             if path.is_file() and path.suffix.lower() in self.supported_extensions:
                 if not self.state_store.seen_success(path):
-                    self.ingest_queue.put(path)
+                    self.ingest_queue.put(QueueItem(path=path, force=False, source="startup_scan"))
                     queued += 1
                     logger.info(
                         "Queued existing file from watch dir: path=%s queue_size=%d",
@@ -106,9 +115,10 @@ class WatchService:
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
-                path = self.ingest_queue.get(timeout=self.poll_interval_seconds)
+                item = self.ingest_queue.get(timeout=self.poll_interval_seconds)
             except queue.Empty:
                 continue
+            path = item.path
 
             if not path.exists() or path.suffix.lower() not in self.supported_extensions:
                 logger.warning(
@@ -119,15 +129,21 @@ class WatchService:
                 self.ingest_queue.task_done()
                 continue
 
-            if self.state_store.seen_success(path):
+            if self.state_store.seen_success(path) and not item.force:
                 logger.info("Skipping queue item: path=%s reason=already_indexed", path)
                 self.ingest_queue.task_done()
                 continue
 
             try:
-                logger.info("Processing started: path=%s queue_size=%d", path, self.ingest_queue.qsize())
+                logger.info(
+                    "Processing started: path=%s force=%s source=%s queue_size=%d",
+                    path,
+                    item.force,
+                    item.source,
+                    self.ingest_queue.qsize(),
+                )
                 self._wait_until_stable(path)
-                self.orchestrator.process_file(path)
+                self.orchestrator.process_file(path, force=item.force)
                 logger.info("Processing finished: path=%s status=success", path)
             except Exception:  # noqa: BLE001
                 logger.exception("Queue worker failed for %s", path)

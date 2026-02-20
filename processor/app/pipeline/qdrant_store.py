@@ -39,6 +39,17 @@ class QdrantStore:
             query_filter=query_filter,
         )
 
+    def delete_by_path(self, path: str) -> None:
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[models.FieldCondition(key="path", match=models.MatchValue(value=path))]
+                )
+            ),
+            wait=True,
+        )
+
     def dashboard_stats(self, limit_recent: int = 20) -> dict[str, Any]:
         docs: dict[str, dict[str, Any]] = {}
         tag_distribution: dict[str, int] = {}

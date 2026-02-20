@@ -69,13 +69,14 @@ def health() -> dict[str, str]:
 
 
 @app.post("/ingest", response_model=IngestResponse)
-def ingest(payload: dict[str, str]) -> IngestResponse:
+def ingest(payload: dict[str, Any]) -> IngestResponse:
     if not ingest_service:
         raise HTTPException(status_code=503, detail="Service not ready")
     path = payload.get("path")
     if not path:
         raise HTTPException(status_code=400, detail="Missing path")
-    return ingest_service.enqueue(path)
+    force = bool(payload.get("force", False))
+    return ingest_service.enqueue(str(path), force=force)
 
 
 @app.post("/query", response_model=QueryResponse)

@@ -169,6 +169,7 @@ Notes:
 
 - `GET /health`
 - `POST /ingest` body: `{"path":"/watch/file.pdf"}`
+- `POST /ingest` force reprocess: `{"path":"/watch/file.pdf", "force": true}`
 - `POST /query` body: `{"query":"...", "top_k":8, "filters": {"filename":"x", "tags":["a"], "date_from":"2026-01-01"}}`
 - `GET /dashboard/stats`
 - `GET /v1/models` (OpenAI-compatible)

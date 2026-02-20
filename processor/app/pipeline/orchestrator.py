@@ -58,11 +58,16 @@ class PipelineOrchestrator:
             diarization_service=self.diarization,
         )
 
-    def process_file(self, file_path: Path) -> None:
+    def process_file(self, file_path: Path, force: bool = False) -> None:
         ext_type = classify_file(file_path)
         if ext_type == "unsupported":
             logger.info("Skipping unsupported file: %s", file_path)
             return
+
+        if force:
+            logger.info("Force reprocess requested: path=%s. Cleaning previous index entries.", file_path)
+            self.qdrant.delete_by_path(str(file_path))
+            self.state_store.delete_by_path(file_path)
 
         doc_id = str(uuid.uuid4())
         now = datetime.now(UTC)

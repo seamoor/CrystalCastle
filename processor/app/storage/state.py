@@ -87,3 +87,7 @@ class StateStore:
             }
             for r in rows
         ]
+
+    def delete_by_path(self, path: Path) -> None:
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("DELETE FROM documents WHERE path = ?", (str(path),))
