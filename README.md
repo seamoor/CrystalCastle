@@ -1,46 +1,36 @@
 # Local Privacy-First Knowledge Indexer (Docker)
 
-Fully local knowledge indexing stack for audio/video/PDF/PPTX with semantic search and chat UX.
+Local, offline-first knowledge indexing for audio/video/PDF/PPTX with semantic retrieval, summaries, and chat UX.
 
 ## Stack
 
 - `qdrant`: vector database
-- `processor`: Python ingestion + NLP pipeline + API
-- `open-webui`: chat-style frontend (OpenAI-compatible target set to `processor`)
-- `ollama` (optional profile): local LLM for summaries/tags/answers
+- `processor`: Python ingestion + indexing + query API
+- `ollama`: local LLM + vision model runtime
+- `open-webui`: chat frontend connected to `processor` (`local-rag` model)
 
-All services run locally in Docker. No paid/cloud API is required.
+No paid/cloud API is required.
 
-## Features
+## What It Does
 
-- Offline-first architecture
-- Watch folder ingestion from `/watch`
-- Supported types: `mp4`, `mkv`, `mov`, `mp3`, `wav`, `m4a`, `pdf`, `pptx`
+- Watches `/watch` and auto-processes supported files.
+- Supports: `.mp4`, `.mkv`, `.mov`, `.mp3`, `.wav`, `.m4a`, `.pdf`, `.pptx`.
 - Media pipeline:
-  - audio extraction via `ffmpeg`
-  - transcription via `faster-whisper` (timestamps, EN/PL)
-  - optional diarization via `pyannote.audio`
-  - video slide OCR via frame sampling + dedup + PaddleOCR
-  - optional vision reasoning on slide frames via Ollama VLM (e.g. `llava:7b`)
+  - audio extraction (`ffmpeg`)
+  - speech-to-text (`faster-whisper`, timestamps)
+  - optional diarization (`pyannote.audio`)
+  - slide text OCR (`PaddleOCR`)
+  - slide visual reasoning (`Ollama` VLM, e.g. `llava:7b`)
 - Document pipeline:
   - PDF text extraction (`pypdf`)
-  - PPTX slide text extraction (`python-pptx`)
+  - PPTX text extraction (`python-pptx`)
 - Post-processing:
-  - semantic chunking
-  - multilingual embeddings (`sentence-transformers`)
-  - local LLM summaries + tags via Ollama
-- Vector store:
-  - Qdrant collection auto-init
-  - rich metadata (filename, indexed date, language, tags, speakers, timestamps)
-- Query:
-  - semantic retrieval with metadata filters
+  - chunking + embeddings
+  - local summary/tag generation
+- Retrieval/query:
+  - metadata filters (`filename`, `tags`, date range)
   - source citations with timestamps
-  - OpenAI-compatible `/v1/chat/completions` for Open WebUI
-- Dashboard API:
-  - document count
-  - total indexed duration
-  - tag distribution
-  - recent uploads
+  - OpenAI-compatible `/v1/chat/completions`
 
 ## Project Layout
 
@@ -65,52 +55,42 @@ All services run locally in Docker. No paid/cloud API is required.
 
 ## Quick Start
 
-### 1. Start core services (CPU)
+### 1. Start everything
 
 ```bash
 docker compose up -d --build
 ```
 
-Open UI: `http://localhost:3000`
+Endpoints:
+- Open WebUI: `http://localhost:3000`
+- Processor API: `http://localhost:8080`
+- Qdrant: `http://localhost:6333`
 
-Processor API: `http://localhost:8080`
-
-Qdrant: `http://localhost:6333`
-
-If Open WebUI keeps routing prompts directly to Ollama instead of the local RAG API, reset its persisted state:
-
-```bash
-docker compose down
-docker volume rm crystalcastle_open_webui_data
-docker compose up -d --build
-```
-
-### 2. Load local Ollama models (one-time per model)
+### 2. Pull local models (one-time)
 
 ```bash
 docker exec -it ollama ollama pull llama3.1:8b
 docker exec -it ollama ollama pull llava:7b
 ```
 
-### 3. Drop files into watch folder
+### 3. Drop files into `./watch`
 
-Put files into `./watch` on host. They appear as `/watch` in container and are auto-indexed.
+Files are auto-queued and processed.
 
 ### 4. Query
-
-- Open WebUI chat points to `processor` OpenAI-compatible endpoint.
-- Direct API query:
 
 ```bash
 curl -X POST http://localhost:8080/query \
   -H 'content-type: application/json' \
-  -d '{"query":"Streszczenie szkolenia", "top_k": 6, "filters": {"tags": ["szkolenie"]}}'
+  -d '{"query":"Streszczenie szkolenia", "top_k": 6}'
 ```
 
-### 5. Dashboard API
+### 5. Force reindex a file
 
 ```bash
-curl http://localhost:8080/dashboard/stats
+curl -X POST http://localhost:8080/ingest \
+  -H 'content-type: application/json' \
+  -d '{"path":"/watch/SBC FIREWALL AND SECURITY.mp4","force":true}'
 ```
 
 ### 6. Run tests
@@ -120,120 +100,132 @@ cd processor
 pytest
 ```
 
-Or in Docker:
+Or:
 
 ```bash
 docker compose run --rm processor pytest
 ```
 
+## Prompt Presets
+
+Use these in Open WebUI.
+
+Global search across all indexed data:
+
+```text
+Answer using all indexed sources. If unsure, say what is missing and cite sources.
+Question: <your question>
+```
+
+Only one file:
+
+```text
+Search ONLY in indexed <FILE_NAME>. If no relevant indexed context exists, return NO_INDEXED_CONTEXT.
+Question: <your question>
+```
+
+Evidence-first / low-risk response:
+
+```text
+Answer from indexed context only. Include key points with source filenames and timestamps.
+If evidence is missing, return NO_INDEXED_CONTEXT.
+Question: <your question>
+```
+
 ## Configuration
 
-Main config: `config/config.yml`
+Main file: `config/config.yml`.
 
-Key settings:
-
-- `diarization.enabled`: enable/disable speaker diarization
-- `ocr.fps`: frame sampling rate for video OCR
-- `whisper.model_size`: e.g. `tiny`, `base`, `small`, `medium`
-- `chunking.chunk_size` / `chunking.chunk_overlap`
+Important keys:
+- `whisper.model_size`
+- `diarization.enabled`
+- `ocr.enabled`, `ocr.fps`, `ocr.slide_change_threshold`
+- `vision.enabled`, `vision.model`, `vision.max_frames`
 - `embedding.model_name`
-- `processor.gpu_enabled`
-- `query.strict_grounding`: when `true`, responses are extractive-only (no free-form generation)
-- `vision.enabled`: enable/disable visual reasoning from video slide frames
-- `vision.model`: Ollama vision model, e.g. `llava:7b`
-- `vision.max_frames`: max unique frames analyzed per media file
+- `llm.enabled`, `llm.model`, `llm.timeout_seconds`
+- `query.strict_grounding` (currently default `false`)
 
-Environment vars in compose can override host/paths.
+## Current Runtime Behavior
 
-## Windows + NVIDIA (RTX A1000 4GB)
+- On startup, watcher scans existing files in `/watch`.
+- Files already marked `indexed` in state DB are skipped.
+- If you used `force=true`, old entries are deleted and file is indexed again.
 
-Use GPU profile service:
+## Progress and Debug Endpoints
 
-```bash
-docker compose --profile nvidia up -d --build qdrant processor-nvidia open-webui
-```
+- `GET /debug/queue` -> queue size
+- `GET /debug/worker` -> worker alive + queue
+- `GET /debug/jobs` -> live job progress (stage + overall progress)
+- `GET /debug/jobs/by-filename?filename=...`
+- `GET /debug/filenames` -> indexed filenames
 
-Notes:
+Progress includes stages like:
+- `transcription`
+- `ocr_sampling`
+- `ocr_inference`
+- `vision_inference`
+- `summary_tagging`
 
-- Ensure Docker Desktop + NVIDIA Container Toolkit integration is enabled.
-- For 4GB VRAM, use smaller whisper model (`base` or `small`) and keep batch sizes low.
-- You can keep `compute_type: int8` for stability on constrained VRAM.
-
-## macOS Apple Silicon
-
-CPU mode is default and works on arm64 images.
-
-```bash
-docker compose up -d --build
-```
-
-Notes:
-
-- `faster-whisper` runs in CPU mode unless GPU acceleration is available in your runtime.
-- Keep `whisper.model_size` modest (`small`) for better throughput.
-
-## Privacy + Offline Considerations
-
-- No cloud APIs are called by default.
-- Ollama runs locally; set `llm.enabled: false` if you want retrieval-only mode.
-- For fully offline diarization, point `diarization.model_path` to local model files under `./models`.
-- For fully offline model usage, pre-download required models into `./models` and avoid first-run pulls.
+Heartbeats are logged for long stages (STT/OCR/vision/summary-tagging).
 
 ## API Reference
 
 - `GET /health`
 - `POST /ingest` body: `{"path":"/watch/file.pdf"}`
-- `POST /ingest` force reprocess: `{"path":"/watch/file.pdf", "force": true}`
-- `POST /query` body: `{"query":"...", "top_k":8, "filters": {"filename":"x", "tags":["a"], "date_from":"2026-01-01"}}`
+- `POST /ingest` force: `{"path":"/watch/file.pdf", "force": true}`
+- `POST /query` body: `{"query":"...", "top_k":8, "filters": {...}}`
 - `GET /dashboard/stats`
-- `GET /debug/queue`
-- `GET /debug/worker`
-- `GET /debug/jobs`
-- `GET /debug/jobs/by-filename?filename=...`
-- `GET /v1/models` (OpenAI-compatible)
-- `POST /v1/chat/completions` (OpenAI-compatible for Open WebUI)
+- `GET /debug/*` endpoints above
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+
+## Open WebUI Notes
+
+- Model exposed by processor is `local-rag`.
+- Open WebUI is configured to use processor OpenAI-compatible API, not direct Ollama.
+- If WebUI state gets inconsistent, reset volume:
+
+```bash
+docker compose down
+docker volume rm crystalcastle_open_webui_data
+docker compose up -d --build
+```
 
 ## Metadata Stored in Qdrant
 
-Each chunk stores:
-
+Per chunk:
 - `doc_id`, `chunk_id`, `chunk_index`
 - `filename`, `path`
 - `text`, `summary`
-- `date_indexed`
-- `language`
-- `speakers`
-- `tags`
-- `duration_seconds`
-- `timestamp_start`, `timestamp_end`
+- `date_indexed`, `language`, `tags`, `speakers`
+- `duration_seconds`, `timestamp_start`, `timestamp_end`
 
-## Operational Notes
+## Platform Notes
 
-- Designed for batch ingestion with queue-based watcher worker.
-- State tracking in SQLite at `/data/state.db`.
-- Persistent volumes configured for Qdrant, processor data, Open WebUI, and Ollama.
+Windows + NVIDIA:
+
+```bash
+docker compose --profile nvidia up -d --build qdrant processor-nvidia open-webui ollama
+```
+
+macOS Apple Silicon:
+- CPU mode in Docker works.
+- Heavy steps (STT/vision) can be slow; tune model sizes and `top_k`.
 
 ## Troubleshooting
 
-- If OCR or diarization dependencies fail, pipeline logs warning and continues where possible.
-- If Ollama is not running, summaries/tags/answers may be empty unless `llm.enabled` is set to `false`.
-- To enable slide OCR, rebuild `processor` after dependency changes:
+No OCR:
+- check logs for `Paddle runtime detected. Slide OCR is enabled.`
+- rebuild `processor` after dependency changes.
 
-```bash
-docker compose up -d --build processor
-docker compose logs -f processor
-```
+`Local LLM unavailable`:
+- verify Ollama is up and model exists (`ollama list`)
+- restart `processor` after fixes
 
-- OCR is active when logs include `Paddle runtime detected. Slide OCR is enabled.` and `Slide OCR finished: extracted_chars=...`.
-- Check logs:
+Open WebUI request “hangs” but result appears after refresh:
+- backend may have completed but UI stream render lagged
+- reduce prompt size / `top_k`
 
-```bash
-docker compose logs -f processor
-```
-
-## Next Hardening Steps (optional)
-
-- Add retry/backoff queue persistence (Redis/RQ/Celery).
-- Expand integration tests for end-to-end media + OCR pipelines.
-- Add a dedicated metadata collection for document-level aggregates.
-- Add auth/TLS for production LAN exposure.
+Long response times:
+- expected on CPU for large context and vision models
+- use smaller models and tighter prompts when needed
