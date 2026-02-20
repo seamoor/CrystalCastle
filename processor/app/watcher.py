@@ -113,28 +113,37 @@ class WatchService:
         logger.info("Initial watch-dir scan finished: queued_files=%d", queued)
 
     def _worker_loop(self) -> None:
+        logger.info("Watcher worker loop started")
         while not self.stop_event.is_set():
+            item: QueueItem | None = None
             try:
-                item = self.ingest_queue.get(timeout=self.poll_interval_seconds)
-            except queue.Empty:
-                continue
-            path = item.path
+                try:
+                    raw_item = self.ingest_queue.get(timeout=self.poll_interval_seconds)
+                except queue.Empty:
+                    continue
 
-            if not path.exists() or path.suffix.lower() not in self.supported_extensions:
-                logger.warning(
-                    "Skipping queue item: path=%s reason=%s",
-                    path,
-                    "missing_or_unsupported",
-                )
-                self.ingest_queue.task_done()
-                continue
+                # Backward-compatible queue item parsing in case legacy Path items appear.
+                if isinstance(raw_item, QueueItem):
+                    item = raw_item
+                elif isinstance(raw_item, Path):
+                    item = QueueItem(path=raw_item, force=False, source="legacy")
+                else:
+                    logger.warning("Skipping queue item with unknown type: %s", type(raw_item))
+                    continue
 
-            if self.state_store.seen_success(path) and not item.force:
-                logger.info("Skipping queue item: path=%s reason=already_indexed", path)
-                self.ingest_queue.task_done()
-                continue
+                path = item.path
+                if not path.exists() or path.suffix.lower() not in self.supported_extensions:
+                    logger.warning(
+                        "Skipping queue item: path=%s reason=%s",
+                        path,
+                        "missing_or_unsupported",
+                    )
+                    continue
 
-            try:
+                if self.state_store.seen_success(path) and not item.force:
+                    logger.info("Skipping queue item: path=%s reason=already_indexed", path)
+                    continue
+
                 logger.info(
                     "Processing started: path=%s force=%s source=%s queue_size=%d",
                     path,
@@ -146,9 +155,10 @@ class WatchService:
                 self.orchestrator.process_file(path, force=item.force)
                 logger.info("Processing finished: path=%s status=success", path)
             except Exception:  # noqa: BLE001
-                logger.exception("Queue worker failed for %s", path)
+                logger.exception("Queue worker iteration failed")
             finally:
-                self.ingest_queue.task_done()
+                if item is not None:
+                    self.ingest_queue.task_done()
 
     @staticmethod
     def _wait_until_stable(path: Path, checks: int = 3, wait_seconds: float = 1.0) -> None:

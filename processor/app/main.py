@@ -36,6 +36,7 @@ OPENAI_MODEL_ID = "local-rag"
 async def lifespan(_: FastAPI):
     global cfg, state_store, orchestrator, watcher, ingest_service, query_service, dashboard_service
 
+    setup_logging()
     cfg = load_config()
     state_store = StateStore(Path(cfg.processor.data_dir))
     orchestrator = PipelineOrchestrator(cfg, state_store)
@@ -69,6 +70,23 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/debug/queue")
+def debug_queue() -> dict[str, int]:
+    if not watcher:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return {"queue_size": watcher.ingest_queue.qsize()}
+
+
+@app.get("/debug/worker")
+def debug_worker() -> dict[str, bool | int]:
+    if not watcher:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return {
+        "worker_alive": bool(watcher.worker_thread and watcher.worker_thread.is_alive()),
+        "queue_size": watcher.ingest_queue.qsize(),
+    }
+
+
 @app.post("/ingest", response_model=IngestResponse)
 def ingest(payload: dict[str, Any]) -> IngestResponse:
     if not ingest_service:
@@ -77,6 +95,7 @@ def ingest(payload: dict[str, Any]) -> IngestResponse:
     if not path:
         raise HTTPException(status_code=400, detail="Missing path")
     force = bool(payload.get("force", False))
+    logger.info("Ingest request received: path=%s force=%s", path, force)
     return ingest_service.enqueue(str(path), force=force)
 
 
