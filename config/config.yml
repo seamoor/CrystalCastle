@@ -25,6 +25,13 @@ embedding:
   model_name: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
   normalize_embeddings: true
 
+vision:
+  enabled: true
+  model: llava:7b
+  base_url: http://ollama:11434
+  max_frames: 12
+  timeout_seconds: 180
+
 llm:
   enabled: true
   model: llama3.1:8b

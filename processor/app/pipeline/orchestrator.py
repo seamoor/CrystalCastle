@@ -15,6 +15,7 @@ from app.pipeline.llm import LLMService
 from app.pipeline.loaders import extract_pdf_text, extract_pptx_text
 from app.pipeline.media import MediaProcessor
 from app.pipeline.qdrant_store import QdrantStore
+from app.pipeline.vision import VisionService
 from app.storage.progress import ProgressStore
 from app.storage.state import StateStore
 
@@ -58,6 +59,13 @@ class PipelineOrchestrator:
             slide_change_threshold=cfg.ocr.slide_change_threshold,
             ocr_languages=cfg.ocr.languages,
             diarization_service=self.diarization,
+            vision_service=VisionService(
+                enabled=cfg.vision.enabled,
+                base_url=cfg.vision.base_url,
+                model=cfg.vision.model,
+                max_frames=cfg.vision.max_frames,
+                timeout_seconds=cfg.vision.timeout_seconds,
+            ),
         )
 
     def process_file(self, file_path: Path, force: bool = False) -> None:

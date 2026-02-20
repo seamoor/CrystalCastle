@@ -47,6 +47,14 @@ class QueryConfig(BaseModel):
     extractive_max_snippets: int = 8
 
 
+class VisionConfig(BaseModel):
+    enabled: bool = True
+    model: str = "llava:7b"
+    base_url: str = "http://ollama:11434"
+    max_frames: int = 12
+    timeout_seconds: int = 180
+
+
 class LLMConfig(BaseModel):
     enabled: bool = True
     model: str = "llama3.1:8b"
@@ -77,6 +85,7 @@ class AppConfig(BaseModel):
     ocr: OCRConfig = Field(default_factory=OCRConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     processor: ProcessorConfig = Field(default_factory=ProcessorConfig)
@@ -107,6 +116,9 @@ def load_config() -> AppConfig:
             "port": int(os.getenv("QDRANT_PORT", "6333")),
         },
         "llm": {
+            "base_url": os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
+        },
+        "vision": {
             "base_url": os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
         },
     }

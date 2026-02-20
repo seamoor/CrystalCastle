@@ -10,6 +10,7 @@ from typing import Any, Callable
 from PIL import Image
 
 from app.pipeline.diarization import DiarizationService, align_speakers
+from app.pipeline.vision import VisionService
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class MediaProcessor:
         slide_change_threshold: int,
         ocr_languages: list[str],
         diarization_service: DiarizationService,
+        vision_service: VisionService,
     ) -> None:
         self.data_dir = data_dir
         self.whisper_model_size = whisper_model_size
@@ -36,6 +38,7 @@ class MediaProcessor:
         self.slide_change_threshold = slide_change_threshold
         self.ocr_languages = ocr_languages
         self.diarization_service = diarization_service
+        self.vision_service = vision_service
         self._ocr_unavailable_reason: str | None = None
 
         if self.ocr_enabled:
@@ -82,7 +85,7 @@ class MediaProcessor:
         logger.info("Diarization finished: speaker_segments=%d", len(speakers))
 
         logger.info("Slide OCR started: media=%s enabled=%s", path, self.ocr_enabled)
-        slide_text = self._extract_slides_text(path, work_dir, progress_cb=progress_cb)
+        slide_text, vision_text = self._extract_slides_text(path, work_dir, progress_cb=progress_cb)
         logger.info("Slide OCR finished: extracted_chars=%d", len(slide_text))
         transcript_text = "\n".join(
             self._segment_to_line(seg) for seg in segments
@@ -91,6 +94,8 @@ class MediaProcessor:
         merged_text = transcript_text
         if slide_text:
             merged_text += "\n\n[SLIDES OCR]\n" + slide_text
+        if vision_text:
+            merged_text += "\n\n[SLIDES VISION]\n" + vision_text
 
         duration = max((float(seg.get("end", 0.0)) for seg in segments), default=0.0)
         speaker_names = sorted({s.get("speaker", "Speaker 1") for s in segments if s.get("speaker")})
@@ -193,13 +198,20 @@ class MediaProcessor:
         media_path: Path,
         work_dir: Path,
         progress_cb: Callable[[str, float, dict[str, Any] | None], None] | None = None,
-    ) -> str:
-        if not self.ocr_enabled or media_path.suffix.lower() in {".mp3", ".wav", ".m4a"}:
+    ) -> tuple[str, str]:
+        if media_path.suffix.lower() in {".mp3", ".wav", ".m4a"}:
+            self._report(progress_cb, "ocr_sampling", 1.0, {"skipped": True, "reason": "audio_only"})
+            self._report(progress_cb, "ocr_inference", 1.0, {"skipped": True, "reason": "audio_only"})
+            self._report(progress_cb, "vision_inference", 1.0, {"skipped": True, "reason": "audio_only"})
+            return "", ""
+
+        if not self.ocr_enabled and not self.vision_service.enabled:
             if self._ocr_unavailable_reason:
                 logger.info("Slide OCR skipped: media=%s reason=paddle_unavailable", media_path)
             self._report(progress_cb, "ocr_sampling", 1.0, {"skipped": True})
             self._report(progress_cb, "ocr_inference", 1.0, {"skipped": True})
-            return ""
+            self._report(progress_cb, "vision_inference", 1.0, {"skipped": True})
+            return "", ""
 
         frames_dir = work_dir / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
@@ -217,27 +229,52 @@ class MediaProcessor:
         )
         if not unique_frames:
             self._report(progress_cb, "ocr_inference", 1.0, {"unique_frames": 0})
-            return ""
+            self._report(progress_cb, "vision_inference", 1.0, {"unique_frames": 0})
+            return "", ""
 
         texts: list[str] = []
         ocr_engine = self._build_ocr_engine()
         if ocr_engine is None:
             self._report(progress_cb, "ocr_inference", 1.0, {"skipped": True})
-            return ""
-
-        logger.info(
-            "Slide OCR inference started: media=%s unique_frames=%d interval_seconds=30",
-            media_path,
-            len(unique_frames),
-        )
-        processed_frames = 0
-        last_beat = time.monotonic()
-        for frame_path in unique_frames:
-            try:
-                result = ocr_engine.ocr(str(frame_path), cls=True)
-                processed_frames += 1
-                frame_progress = processed_frames / max(1, len(unique_frames))
-                if not result:
+            ocr_text = ""
+        else:
+            logger.info(
+                "Slide OCR inference started: media=%s unique_frames=%d interval_seconds=30",
+                media_path,
+                len(unique_frames),
+            )
+            processed_frames = 0
+            last_beat = time.monotonic()
+            for frame_path in unique_frames:
+                try:
+                    result = ocr_engine.ocr(str(frame_path), cls=True)
+                    processed_frames += 1
+                    frame_progress = processed_frames / max(1, len(unique_frames))
+                    if not result:
+                        now = time.monotonic()
+                        if now - last_beat >= 30:
+                            logger.info(
+                                "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d stage_progress=%.1f%%",
+                                media_path,
+                                processed_frames,
+                                len(texts),
+                                frame_progress * 100.0,
+                            )
+                            self._report(
+                                progress_cb,
+                                "ocr_inference",
+                                frame_progress,
+                                {"processed_frames": processed_frames, "unique_frames": len(unique_frames)},
+                            )
+                            last_beat = now
+                        continue
+                    lines: list[str] = []
+                    for item in result[0] or []:
+                        txt = item[1][0] if item and len(item) > 1 else ""
+                        if txt:
+                            lines.append(txt)
+                    if lines:
+                        texts.append(" ".join(lines))
                     now = time.monotonic()
                     if now - last_beat >= 30:
                         logger.info(
@@ -254,35 +291,23 @@ class MediaProcessor:
                             {"processed_frames": processed_frames, "unique_frames": len(unique_frames)},
                         )
                         last_beat = now
-                    continue
-                lines: list[str] = []
-                for item in result[0] or []:
-                    txt = item[1][0] if item and len(item) > 1 else ""
-                    if txt:
-                        lines.append(txt)
-                if lines:
-                    texts.append(" ".join(lines))
-                now = time.monotonic()
-                if now - last_beat >= 30:
-                    logger.info(
-                        "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d stage_progress=%.1f%%",
-                        media_path,
-                        processed_frames,
-                        len(texts),
-                        frame_progress * 100.0,
-                    )
-                    self._report(
-                        progress_cb,
-                        "ocr_inference",
-                        frame_progress,
-                        {"processed_frames": processed_frames, "unique_frames": len(unique_frames)},
-                    )
-                    last_beat = now
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("OCR failed for %s: %s", frame_path, exc)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("OCR failed for %s: %s", frame_path, exc)
 
-        self._report(progress_cb, "ocr_inference", 1.0, {"processed_frames": processed_frames})
-        return "\n".join(texts)
+            self._report(progress_cb, "ocr_inference", 1.0, {"processed_frames": processed_frames})
+            ocr_text = "\n".join(texts)
+
+        self._report(progress_cb, "vision_inference", 0.0, {"unique_frames": len(unique_frames)})
+        vision_descriptions = self.vision_service.describe_frames(unique_frames)
+        self._report(
+            progress_cb,
+            "vision_inference",
+            1.0,
+            {"described_frames": min(len(unique_frames), self.vision_service.max_frames)},
+        )
+        vision_text = "\n".join(vision_descriptions)
+        logger.info("Slide vision reasoning finished: media=%s descriptions=%d", media_path, len(vision_descriptions))
+        return ocr_text, vision_text
 
     def _sample_frames(self, media_path: Path, frames_dir: Path) -> None:
         logger.info(

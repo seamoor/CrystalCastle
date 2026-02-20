@@ -8,9 +8,10 @@ from typing import Any
 class ProgressStore:
     STAGE_WEIGHTS: dict[str, float] = {
         "extract_audio": 0.05,
-        "transcription": 0.55,
+        "transcription": 0.45,
         "ocr_sampling": 0.10,
         "ocr_inference": 0.15,
+        "vision_inference": 0.10,
         "chunking": 0.05,
         "embedding": 0.05,
         "upsert": 0.05,
@@ -92,7 +93,16 @@ class ProgressStore:
             start, end = mapping.get(stage, (0.0, 0.05))
             return start + (end - start) * stage_progress
 
-        order = ["extract_audio", "transcription", "ocr_sampling", "ocr_inference", "chunking", "embedding", "upsert"]
+        order = [
+            "extract_audio",
+            "transcription",
+            "ocr_sampling",
+            "ocr_inference",
+            "vision_inference",
+            "chunking",
+            "embedding",
+            "upsert",
+        ]
         if stage not in self.STAGE_WEIGHTS:
             return 0.0
         done = 0.0

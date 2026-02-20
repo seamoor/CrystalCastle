@@ -21,6 +21,7 @@ All services run locally in Docker. No paid/cloud API is required.
   - transcription via `faster-whisper` (timestamps, EN/PL)
   - optional diarization via `pyannote.audio`
   - video slide OCR via frame sampling + dedup + PaddleOCR
+  - optional vision reasoning on slide frames via Ollama VLM (e.g. `llava:7b`)
 - Document pipeline:
   - PDF text extraction (`pypdf`)
   - PPTX slide text extraction (`python-pptx`)
@@ -84,10 +85,11 @@ docker volume rm crystalcastle_open_webui_data
 docker compose up -d --build
 ```
 
-### 2. Load a local Ollama model (one-time per model)
+### 2. Load local Ollama models (one-time per model)
 
 ```bash
 docker exec -it ollama ollama pull llama3.1:8b
+docker exec -it ollama ollama pull llava:7b
 ```
 
 ### 3. Drop files into watch folder
@@ -137,6 +139,9 @@ Key settings:
 - `embedding.model_name`
 - `processor.gpu_enabled`
 - `query.strict_grounding`: when `true`, responses are extractive-only (no free-form generation)
+- `vision.enabled`: enable/disable visual reasoning from video slide frames
+- `vision.model`: Ollama vision model, e.g. `llava:7b`
+- `vision.max_frames`: max unique frames analyzed per media file
 
 Environment vars in compose can override host/paths.
 
