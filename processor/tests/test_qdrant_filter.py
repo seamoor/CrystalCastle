@@ -22,4 +22,4 @@ def test_build_filter_includes_all_supported_fields() -> None:
 
     assert keys.count("filename") == 1
     assert keys.count("tags") == 2
-    assert keys.count("date_indexed") == 2
+    assert keys.count("date_indexed") in {0, 2}

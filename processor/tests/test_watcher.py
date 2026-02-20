@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 from pathlib import Path
 
-from app.watcher import WatchHandler, WatchService
+from app.watcher import QueueItem, WatchHandler, WatchService
 
 
 class Event:
@@ -29,14 +29,14 @@ class FakeOrchestrator:
 
 
 def test_watch_handler_enqueues_only_supported_files(tmp_path: Path) -> None:
-    q: queue.Queue[Path] = queue.Queue()
+    q: queue.Queue[QueueItem] = queue.Queue()
     handler = WatchHandler(q, supported_ext={".pdf", ".mp4"})
 
     handler.on_created(Event(str(tmp_path / "a.pdf")))
     handler.on_created(Event(str(tmp_path / "a.txt")))
     handler.on_created(Event(str(tmp_path / "folder"), is_directory=True))
 
-    queued = [q.get_nowait()]
+    queued = [q.get_nowait().path]
     assert queued[0].suffix == ".pdf"
     assert q.empty()
 
@@ -59,6 +59,6 @@ def test_enqueue_existing_files_skips_already_indexed(tmp_path: Path) -> None:
 
     svc._enqueue_existing_files()
 
-    queued = [svc.ingest_queue.get_nowait()]
+    queued = [svc.ingest_queue.get_nowait().path]
     assert queued == [pdf_new]
     assert svc.ingest_queue.empty()

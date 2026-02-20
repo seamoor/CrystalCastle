@@ -14,7 +14,7 @@ class QueryService:
         embedding: EmbeddingService,
         qdrant: QdrantStore,
         llm: LLMService,
-        strict_grounding: bool = True,
+        strict_grounding: bool = False,
         extractive_max_snippets: int = 8,
     ) -> None:
         self.embedding = embedding

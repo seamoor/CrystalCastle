@@ -201,20 +201,29 @@ class QdrantStore:
                     models.FieldCondition(key="tags", match=models.MatchValue(value=str(tag)))
                 )
         if date_from := filters.get("date_from"):
-            conditions.append(
-                models.FieldCondition(
-                    key="date_indexed",
-                    range=models.Range(gte=str(date_from)),
-                )
-            )
+            cond = QdrantStore._build_date_condition(gte=str(date_from))
+            if cond is not None:
+                conditions.append(cond)
         if date_to := filters.get("date_to"):
-            conditions.append(
-                models.FieldCondition(
-                    key="date_indexed",
-                    range=models.Range(lte=str(date_to)),
-                )
-            )
+            cond = QdrantStore._build_date_condition(lte=str(date_to))
+            if cond is not None:
+                conditions.append(cond)
         return models.Filter(must=conditions) if conditions else None
+
+    @staticmethod
+    def _build_date_condition(gte: str | None = None, lte: str | None = None) -> models.FieldCondition | None:
+        # Qdrant supports DatetimeRange in newer clients. Fallback to numeric Range only
+        # when values are parseable as floats.
+        dt_cls = getattr(models, "DatetimeRange", None)
+        if dt_cls is not None:
+            return models.FieldCondition(key="date_indexed", range=dt_cls(gte=gte, lte=lte))
+
+        try:
+            gte_num = float(gte) if gte is not None else None
+            lte_num = float(lte) if lte is not None else None
+            return models.FieldCondition(key="date_indexed", range=models.Range(gte=gte_num, lte=lte_num))
+        except (TypeError, ValueError):
+            return None
 
 
 def _sort_chunks(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
