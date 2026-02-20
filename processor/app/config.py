@@ -43,7 +43,7 @@ class EmbeddingConfig(BaseModel):
 
 
 class QueryConfig(BaseModel):
-    strict_grounding: bool = True
+    strict_grounding: bool = False
     extractive_max_snippets: int = 8
 
 

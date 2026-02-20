@@ -44,7 +44,7 @@ qdrant:
   collection_name: knowledge_chunks
 
 query:
-  strict_grounding: true
+  strict_grounding: false
   extractive_max_snippets: 8
 
 processor:
