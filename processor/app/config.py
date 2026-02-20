@@ -6,15 +6,18 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
+from pydantic.config import ConfigDict
 
 
 class WhisperConfig(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     model_size: str = "small"
     device: str = "auto"
     compute_type: str = "int8"
 
 
 class DiarizationConfig(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     enabled: bool = False
     model_path: str | None = None
     min_speakers: int | None = None
@@ -34,8 +37,14 @@ class ChunkingConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     normalize_embeddings: bool = True
+
+
+class QueryConfig(BaseModel):
+    strict_grounding: bool = True
+    extractive_max_snippets: int = 8
 
 
 class LLMConfig(BaseModel):
@@ -71,6 +80,7 @@ class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     processor: ProcessorConfig = Field(default_factory=ProcessorConfig)
+    query: QueryConfig = Field(default_factory=QueryConfig)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

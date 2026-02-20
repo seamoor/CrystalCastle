@@ -9,10 +9,19 @@ from app.pipeline.qdrant_store import QdrantStore
 
 
 class QueryService:
-    def __init__(self, embedding: EmbeddingService, qdrant: QdrantStore, llm: LLMService) -> None:
+    def __init__(
+        self,
+        embedding: EmbeddingService,
+        qdrant: QdrantStore,
+        llm: LLMService,
+        strict_grounding: bool = True,
+        extractive_max_snippets: int = 8,
+    ) -> None:
         self.embedding = embedding
         self.qdrant = qdrant
         self.llm = llm
+        self.strict_grounding = strict_grounding
+        self.extractive_max_snippets = extractive_max_snippets
 
     def query(self, query_text: str, top_k: int = 8, filters: dict | None = None) -> QueryResponse:
         merged_filters = self._merge_filters_with_filename_hint(query_text, filters)
@@ -45,7 +54,7 @@ class QueryService:
             contexts.append(text)
 
         context = "\n\n".join(contexts)
-        answer = self.llm.answer(query_text, context)
+        answer = self._build_answer(query_text=query_text, context=context, sources=sources)
 
         if sources:
             src_block = ["\n\nSources:"]
@@ -88,7 +97,7 @@ class QueryService:
             )
 
         context = "\n\n".join(contexts)
-        answer = self.llm.answer(query_text, context)
+        answer = self._build_answer(query_text=query_text, context=context, sources=sources)
         src_block = ["\n\nSources:"]
         for s in sources:
             if s.timestamp_start is not None:
@@ -98,6 +107,29 @@ class QueryService:
         answer += "\n" + "\n".join(src_block)
 
         return QueryResponse(answer=answer, sources=sources)
+
+    def _build_answer(self, query_text: str, context: str, sources: list[SourceRef]) -> str:
+        if not sources or not context.strip():
+            return "NO_INDEXED_CONTEXT"
+
+        if self.strict_grounding:
+            return self._extractive_answer(query_text=query_text, sources=sources)
+
+        response = self.llm.answer(query_text, context)
+        return response if response else "NO_INDEXED_CONTEXT"
+
+    def _extractive_answer(self, query_text: str, sources: list[SourceRef]) -> str:
+        lines = [
+            "Grounded answer (extractive mode, no free-form generation):",
+            f"Question: {query_text}",
+            "Evidence snippets:",
+        ]
+        for i, src in enumerate(sources[: self.extractive_max_snippets], start=1):
+            ts = ""
+            if src.timestamp_start is not None:
+                ts = f" [{src.timestamp_start:.2f}s-{(src.timestamp_end or 0.0):.2f}s]"
+            lines.append(f"{i}. {src.filename}{ts} :: {src.text_preview}")
+        return "\n".join(lines)
 
     @staticmethod
     def _merge_filters_with_filename_hint(query_text: str, filters: dict | None) -> dict | None:

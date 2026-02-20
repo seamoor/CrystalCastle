@@ -36,6 +36,10 @@ qdrant:
   port: 6333
   collection_name: knowledge_chunks
 
+query:
+  strict_grounding: true
+  extractive_max_snippets: 8
+
 processor:
   watch_dir: /watch
   data_dir: /data

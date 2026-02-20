@@ -53,7 +53,13 @@ async def lifespan(_: FastAPI):
     watcher.start()
 
     ingest_service = IngestService(watcher)
-    query_service = QueryService(orchestrator.embedding, orchestrator.qdrant, orchestrator.llm)
+    query_service = QueryService(
+        orchestrator.embedding,
+        orchestrator.qdrant,
+        orchestrator.llm,
+        strict_grounding=cfg.query.strict_grounding,
+        extractive_max_snippets=cfg.query.extractive_max_snippets,
+    )
     dashboard_service = DashboardService(orchestrator.qdrant, state_store)
 
     logger.info("Processor service started")

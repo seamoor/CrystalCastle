@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import requests
@@ -15,7 +16,8 @@ class LLMService:
         self.model = model
         self.enabled = enabled
         self.timeout_seconds = timeout_seconds
-        self._disabled_due_to_error = False
+        self._consecutive_failures = 0
+        self._blocked_until = 0.0
 
     def summarize_and_tag(self, text: str) -> tuple[str, list[str], str]:
         if not self.enabled:
@@ -66,21 +68,48 @@ class LLMService:
         return "No model response and no indexed context matched the query."
 
     def _generate(self, prompt: str) -> str:
-        try:
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={"model": self.model, "prompt": prompt, "stream": False},
-                timeout=(3, self.timeout_seconds),
-            )
-            response.raise_for_status()
-            return response.json().get("response", "")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM request failed: %s", exc)
-            if not self._disabled_due_to_error:
-                logger.warning("Disabling local LLM after request failure. Set llm.enabled=true once Ollama is available.")
-                self._disabled_due_to_error = True
-            self.enabled = False
+        if not self.enabled:
             return ""
+
+        now = time.monotonic()
+        if now < self._blocked_until:
+            logger.warning(
+                "LLM temporarily unavailable due to previous failures. retry_in_seconds=%.1f",
+                self._blocked_until - now,
+            )
+            return ""
+
+        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=(3, self.timeout_seconds),
+                )
+                response.raise_for_status()
+                self._consecutive_failures = 0
+                self._blocked_until = 0.0
+                return response.json().get("response", "")
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt == 1:
+                    logger.warning("LLM request attempt 1 failed, retrying once: %s", exc)
+                else:
+                    logger.warning("LLM request attempt 2 failed: %s", exc)
+
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= 3:
+            cooldown_seconds = min(300.0, 30.0 * self._consecutive_failures)
+            self._blocked_until = time.monotonic() + cooldown_seconds
+            logger.warning(
+                "LLM circuit breaker opened after %d failures. cooldown_seconds=%.0f last_error=%s",
+                self._consecutive_failures,
+                cooldown_seconds,
+                last_exc,
+            )
+        return ""
 
     @staticmethod
     def _extract_json(text: str) -> str:

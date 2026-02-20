@@ -136,6 +136,7 @@ Key settings:
 - `chunking.chunk_size` / `chunking.chunk_overlap`
 - `embedding.model_name`
 - `processor.gpu_enabled`
+- `query.strict_grounding`: when `true`, responses are extractive-only (no free-form generation)
 
 Environment vars in compose can override host/paths.
 
