@@ -15,15 +15,17 @@ from app.pipeline.llm import LLMService
 from app.pipeline.loaders import extract_pdf_text, extract_pptx_text
 from app.pipeline.media import MediaProcessor
 from app.pipeline.qdrant_store import QdrantStore
+from app.storage.progress import ProgressStore
 from app.storage.state import StateStore
 
 logger = logging.getLogger(__name__)
 
 
 class PipelineOrchestrator:
-    def __init__(self, cfg: AppConfig, state_store: StateStore) -> None:
+    def __init__(self, cfg: AppConfig, state_store: StateStore, progress_store: ProgressStore) -> None:
         self.cfg = cfg
         self.state_store = state_store
+        self.progress_store = progress_store
 
         self.embedding = EmbeddingService(
             model_name=cfg.embedding.model_name,
@@ -71,6 +73,7 @@ class PipelineOrchestrator:
 
         doc_id = str(uuid.uuid4())
         now = datetime.now(UTC)
+        self.progress_store.start(doc_id, file_path.name, str(file_path), ext_type)
         logger.info(
             "Indexing started: doc_id=%s path=%s type=%s",
             doc_id,
@@ -89,7 +92,9 @@ class PipelineOrchestrator:
 
         try:
             logger.info("Extract phase started: doc_id=%s path=%s", doc_id, file_path)
-            result = self._extract(file_path, ext_type)
+            self.progress_store.update(doc_id, "extract", 0.0, {"path": str(file_path)})
+            result = self._extract(file_path, ext_type, doc_id)
+            self.progress_store.update(doc_id, "extract", 1.0, {"path": str(file_path)})
             logger.info(
                 "Extract phase finished: doc_id=%s language=%s duration_seconds=%.2f",
                 doc_id,
@@ -107,11 +112,13 @@ class PipelineOrchestrator:
             )
             if not chunks:
                 raise ValueError("Chunking returned no chunks")
+            self.progress_store.update(doc_id, "chunking", 1.0, {"chunks": len(chunks)})
             logger.info("Chunking finished: doc_id=%s chunks=%d", doc_id, len(chunks))
 
             chunk_texts = [c.text for c in chunks]
             logger.info("Embedding phase started: doc_id=%s", doc_id)
             vectors = self.embedding.embed(chunk_texts)
+            self.progress_store.update(doc_id, "embedding", 1.0, {"vectors": len(vectors)})
             logger.info("Embedding phase finished: doc_id=%s vectors=%d", doc_id, len(vectors))
 
             logger.info("Summary/tag phase started: doc_id=%s", doc_id)
@@ -151,6 +158,7 @@ class PipelineOrchestrator:
 
             logger.info("Qdrant upsert started: doc_id=%s points=%d", doc_id, len(payloads))
             self.qdrant.upsert_chunks(vectors=vectors, payloads=payloads)
+            self.progress_store.update(doc_id, "upsert", 1.0, {"points": len(payloads)})
             logger.info("Qdrant upsert finished: doc_id=%s", doc_id)
             self.state_store.upsert(
                 IndexedDocument(
@@ -173,6 +181,7 @@ class PipelineOrchestrator:
                 len(tags),
                 len(speakers),
             )
+            self.progress_store.complete(doc_id, status="indexed")
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "Indexing failed: doc_id=%s path=%s error=%s",
@@ -190,10 +199,22 @@ class PipelineOrchestrator:
                     error=str(exc),
                 )
             )
+            self.progress_store.complete(doc_id, status="failed", error=str(exc))
 
-    def _extract(self, file_path: Path, ext_type: str) -> dict:
+    def _extract(self, file_path: Path, ext_type: str, doc_id: str) -> dict:
         if ext_type == "media":
-            return self.media.process(file_path)
+            def media_progress(stage: str, progress: float, details: dict | None = None) -> None:
+                overall = self.progress_store.update(doc_id, stage, progress, details or {})
+                if overall is not None:
+                    logger.info(
+                        "Progress update: doc_id=%s stage=%s stage_progress=%.1f%% overall_progress=%.1f%%",
+                        doc_id,
+                        stage,
+                        progress * 100.0,
+                        overall * 100.0,
+                    )
+
+            return self.media.process(file_path, progress_cb=media_progress)
         if ext_type == "pdf":
             return {"text": extract_pdf_text(file_path), "language": None, "duration_seconds": 0.0, "segments": []}
         if ext_type == "pptx":

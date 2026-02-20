@@ -16,6 +16,7 @@ from app.pipeline.orchestrator import PipelineOrchestrator
 from app.services.dashboard_service import DashboardService
 from app.services.ingest_service import IngestService
 from app.services.query_service import QueryService
+from app.storage.progress import ProgressStore
 from app.storage.state import StateStore
 from app.watcher import WatchService
 
@@ -29,17 +30,19 @@ watcher: WatchService | None = None
 ingest_service: IngestService | None = None
 query_service: QueryService | None = None
 dashboard_service: DashboardService | None = None
+progress_store: ProgressStore | None = None
 OPENAI_MODEL_ID = "local-rag"
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global cfg, state_store, orchestrator, watcher, ingest_service, query_service, dashboard_service
+    global cfg, state_store, orchestrator, watcher, ingest_service, query_service, dashboard_service, progress_store
 
     setup_logging()
     cfg = load_config()
     state_store = StateStore(Path(cfg.processor.data_dir))
-    orchestrator = PipelineOrchestrator(cfg, state_store)
+    progress_store = ProgressStore()
+    orchestrator = PipelineOrchestrator(cfg, state_store, progress_store)
     watcher = WatchService(
         watch_dir=Path(cfg.processor.watch_dir),
         orchestrator=orchestrator,
@@ -85,6 +88,20 @@ def debug_worker() -> dict[str, bool | int]:
         "worker_alive": bool(watcher.worker_thread and watcher.worker_thread.is_alive()),
         "queue_size": watcher.ingest_queue.qsize(),
     }
+
+
+@app.get("/debug/jobs")
+def debug_jobs() -> dict[str, list[dict[str, Any]]]:
+    if not progress_store:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return {"jobs": progress_store.all()}
+
+
+@app.get("/debug/jobs/by-filename")
+def debug_jobs_by_filename(filename: str) -> dict[str, list[dict[str, Any]]]:
+    if not progress_store:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return {"jobs": progress_store.by_filename(filename)}
 
 
 @app.post("/ingest", response_model=IngestResponse)

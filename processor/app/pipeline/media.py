@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any, Callable
 
 from PIL import Image
 
@@ -50,7 +51,11 @@ class MediaProcessor:
                     exc,
                 )
 
-    def process(self, path: Path) -> dict:
+    def process(
+        self,
+        path: Path,
+        progress_cb: Callable[[str, float, dict[str, Any] | None], None] | None = None,
+    ) -> dict:
         work_dir = self.data_dir / "jobs" / path.stem
         work_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Media processing started: path=%s work_dir=%s", path, work_dir)
@@ -58,9 +63,12 @@ class MediaProcessor:
         audio_path = work_dir / "audio.wav"
         logger.info("Extracting audio track: input=%s output=%s", path, audio_path)
         self._extract_audio(path, audio_path)
+        self._report(progress_cb, "extract_audio", 1.0, {"audio_path": str(audio_path)})
+
+        audio_duration = _probe_duration_seconds(audio_path)
 
         logger.info("Transcription started: audio=%s", audio_path)
-        transcript = self._transcribe(audio_path)
+        transcript = self._transcribe(audio_path, audio_duration=audio_duration, progress_cb=progress_cb)
         segments = transcript["segments"]
         logger.info(
             "Transcription finished: language=%s segments=%d",
@@ -74,7 +82,7 @@ class MediaProcessor:
         logger.info("Diarization finished: speaker_segments=%d", len(speakers))
 
         logger.info("Slide OCR started: media=%s enabled=%s", path, self.ocr_enabled)
-        slide_text = self._extract_slides_text(path, work_dir)
+        slide_text = self._extract_slides_text(path, work_dir, progress_cb=progress_cb)
         logger.info("Slide OCR finished: extracted_chars=%d", len(slide_text))
         transcript_text = "\n".join(
             self._segment_to_line(seg) for seg in segments
@@ -119,7 +127,12 @@ class MediaProcessor:
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def _transcribe(self, audio_path: Path) -> dict:
+    def _transcribe(
+        self,
+        audio_path: Path,
+        audio_duration: float,
+        progress_cb: Callable[[str, float, dict[str, Any] | None], None] | None = None,
+    ) -> dict:
         try:
             from faster_whisper import WhisperModel
         except Exception as exc:  # noqa: BLE001
@@ -135,6 +148,7 @@ class MediaProcessor:
             compute_type=self.whisper_compute_type,
         )
         logger.info("Transcription heartbeat started: audio=%s interval_seconds=30", audio_path)
+        self._report(progress_cb, "transcription", 0.0, {"audio_duration_seconds": audio_duration})
         segments, info = model.transcribe(str(audio_path), vad_filter=True, word_timestamps=False)
 
         out_segments: list[dict] = []
@@ -148,30 +162,50 @@ class MediaProcessor:
                 }
             )
             now = time.monotonic()
+            progress = 0.0
+            if audio_duration > 0:
+                progress = min(1.0, float(seg.end) / audio_duration)
             if now - last_beat >= 30:
                 logger.info(
-                    "Transcription heartbeat: audio=%s collected_segments=%d last_end=%.2f",
+                    "Transcription heartbeat: audio=%s collected_segments=%d last_end=%.2f stage_progress=%.1f%%",
                     audio_path,
                     len(out_segments),
                     float(seg.end),
+                    progress * 100.0,
+                )
+                self._report(
+                    progress_cb,
+                    "transcription",
+                    progress,
+                    {"collected_segments": len(out_segments), "last_end_seconds": float(seg.end)},
                 )
                 last_beat = now
+
+        self._report(progress_cb, "transcription", 1.0, {"collected_segments": len(out_segments)})
 
         return {
             "language": getattr(info, "language", None),
             "segments": out_segments,
         }
 
-    def _extract_slides_text(self, media_path: Path, work_dir: Path) -> str:
+    def _extract_slides_text(
+        self,
+        media_path: Path,
+        work_dir: Path,
+        progress_cb: Callable[[str, float, dict[str, Any] | None], None] | None = None,
+    ) -> str:
         if not self.ocr_enabled or media_path.suffix.lower() in {".mp3", ".wav", ".m4a"}:
             if self._ocr_unavailable_reason:
                 logger.info("Slide OCR skipped: media=%s reason=paddle_unavailable", media_path)
+            self._report(progress_cb, "ocr_sampling", 1.0, {"skipped": True})
+            self._report(progress_cb, "ocr_inference", 1.0, {"skipped": True})
             return ""
 
         frames_dir = work_dir / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
         self._sample_frames(media_path, frames_dir)
         total_frames = len(list(frames_dir.glob("*.jpg")))
+        self._report(progress_cb, "ocr_sampling", 1.0, {"sampled_frames": total_frames})
         logger.info("Slide OCR frame sampling finished: media=%s frames=%d", media_path, total_frames)
 
         unique_frames = self._deduplicate_frames(sorted(frames_dir.glob("*.jpg")))
@@ -182,11 +216,13 @@ class MediaProcessor:
             self.slide_change_threshold,
         )
         if not unique_frames:
+            self._report(progress_cb, "ocr_inference", 1.0, {"unique_frames": 0})
             return ""
 
         texts: list[str] = []
         ocr_engine = self._build_ocr_engine()
         if ocr_engine is None:
+            self._report(progress_cb, "ocr_inference", 1.0, {"skipped": True})
             return ""
 
         logger.info(
@@ -200,14 +236,22 @@ class MediaProcessor:
             try:
                 result = ocr_engine.ocr(str(frame_path), cls=True)
                 processed_frames += 1
+                frame_progress = processed_frames / max(1, len(unique_frames))
                 if not result:
                     now = time.monotonic()
                     if now - last_beat >= 30:
                         logger.info(
-                            "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d",
+                            "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d stage_progress=%.1f%%",
                             media_path,
                             processed_frames,
                             len(texts),
+                            frame_progress * 100.0,
+                        )
+                        self._report(
+                            progress_cb,
+                            "ocr_inference",
+                            frame_progress,
+                            {"processed_frames": processed_frames, "unique_frames": len(unique_frames)},
                         )
                         last_beat = now
                     continue
@@ -221,15 +265,23 @@ class MediaProcessor:
                 now = time.monotonic()
                 if now - last_beat >= 30:
                     logger.info(
-                        "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d",
+                        "Slide OCR heartbeat: media=%s processed_frames=%d extracted_entries=%d stage_progress=%.1f%%",
                         media_path,
                         processed_frames,
                         len(texts),
+                        frame_progress * 100.0,
+                    )
+                    self._report(
+                        progress_cb,
+                        "ocr_inference",
+                        frame_progress,
+                        {"processed_frames": processed_frames, "unique_frames": len(unique_frames)},
                     )
                     last_beat = now
             except Exception as exc:  # noqa: BLE001
                 logger.warning("OCR failed for %s: %s", frame_path, exc)
 
+        self._report(progress_cb, "ocr_inference", 1.0, {"processed_frames": processed_frames})
         return "\n".join(texts)
 
     def _sample_frames(self, media_path: Path, frames_dir: Path) -> None:
@@ -249,6 +301,16 @@ class MediaProcessor:
             str(frames_dir / "frame_%06d.jpg"),
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    @staticmethod
+    def _report(
+        progress_cb: Callable[[str, float, dict[str, Any] | None], None] | None,
+        stage: str,
+        progress: float,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if progress_cb:
+            progress_cb(stage, progress, details)
 
     def _deduplicate_frames(self, frame_paths: list[Path]) -> list[Path]:
         unique: list[Path] = []
@@ -315,3 +377,21 @@ def _has_cuda() -> bool:
         return torch.cuda.is_available()
     except Exception:  # noqa: BLE001
         return False
+
+
+def _probe_duration_seconds(audio_path: Path) -> float:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(audio_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return float(proc.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return 0.0

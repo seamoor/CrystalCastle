@@ -180,6 +180,10 @@ Notes:
 - `POST /ingest` force reprocess: `{"path":"/watch/file.pdf", "force": true}`
 - `POST /query` body: `{"query":"...", "top_k":8, "filters": {"filename":"x", "tags":["a"], "date_from":"2026-01-01"}}`
 - `GET /dashboard/stats`
+- `GET /debug/queue`
+- `GET /debug/worker`
+- `GET /debug/jobs`
+- `GET /debug/jobs/by-filename?filename=...`
 - `GET /v1/models` (OpenAI-compatible)
 - `POST /v1/chat/completions` (OpenAI-compatible for Open WebUI)
 
