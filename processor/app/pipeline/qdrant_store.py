@@ -106,6 +106,85 @@ class QdrantStore:
             "recent_uploads": recent_uploads,
         }
 
+    def get_chunks_by_filename(self, filename: str, limit: int = 2000) -> list[dict[str, Any]]:
+        exact = self._scroll_by_exact_filename(filename, limit=limit)
+        if exact:
+            return exact
+
+        # Fallback: case/spacing-insensitive local match when exact value differs.
+        target = _normalize_filename(filename)
+        matched: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not points:
+                break
+            for point in points:
+                payload = point.payload or {}
+                payload_name = str(payload.get("filename", ""))
+                if _normalize_filename(payload_name) == target:
+                    matched.append(payload)
+                    if len(matched) >= limit:
+                        return _sort_chunks(matched)
+            if offset is None:
+                break
+        return _sort_chunks(matched)
+
+    def list_filenames(self, limit: int = 500) -> list[str]:
+        found: set[str] = set()
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not points:
+                break
+            for point in points:
+                payload = point.payload or {}
+                name = str(payload.get("filename", "")).strip()
+                if name:
+                    found.add(name)
+                    if len(found) >= limit:
+                        return sorted(found)
+            if offset is None:
+                break
+        return sorted(found)
+
+    def _scroll_by_exact_filename(self, filename: str, limit: int) -> list[dict[str, Any]]:
+        matched: list[dict[str, Any]] = []
+        offset = None
+        query_filter = models.Filter(
+            must=[models.FieldCondition(key="filename", match=models.MatchValue(value=str(filename)))]
+        )
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=min(256, max(1, limit - len(matched))),
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+                scroll_filter=query_filter,
+            )
+            if not points:
+                break
+            for point in points:
+                matched.append(point.payload or {})
+                if len(matched) >= limit:
+                    return _sort_chunks(matched)
+            if offset is None:
+                break
+        return _sort_chunks(matched)
+
     @staticmethod
     def _build_filter(filters: dict[str, Any] | None) -> models.Filter | None:
         if not filters:
@@ -136,3 +215,11 @@ class QdrantStore:
                 )
             )
         return models.Filter(must=conditions) if conditions else None
+
+
+def _sort_chunks(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(payloads, key=lambda p: int(p.get("chunk_index", 0) or 0))
+
+
+def _normalize_filename(name: str) -> str:
+    return " ".join(name.strip().lower().split())

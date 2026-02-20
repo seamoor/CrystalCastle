@@ -76,6 +76,14 @@ Processor API: `http://localhost:8080`
 
 Qdrant: `http://localhost:6333`
 
+If Open WebUI keeps routing prompts directly to Ollama instead of the local RAG API, reset its persisted state:
+
+```bash
+docker compose down
+docker volume rm crystalcastle_open_webui_data
+docker compose up -d --build
+```
+
 ### 2. Load a local Ollama model (one-time per model)
 
 ```bash
@@ -199,6 +207,14 @@ Each chunk stores:
 
 - If OCR or diarization dependencies fail, pipeline logs warning and continues where possible.
 - If Ollama is not running, summaries/tags/answers may be empty unless `llm.enabled` is set to `false`.
+- To enable slide OCR, rebuild `processor` after dependency changes:
+
+```bash
+docker compose up -d --build processor
+docker compose logs -f processor
+```
+
+- OCR is active when logs include `Paddle runtime detected. Slide OCR is enabled.` and `Slide OCR finished: extracted_chars=...`.
 - Check logs:
 
 ```bash

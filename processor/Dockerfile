@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
+    libgomp1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     libmagic1 \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*

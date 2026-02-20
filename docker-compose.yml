@@ -86,10 +86,14 @@ services:
     ports:
       - "3000:8080"
     environment:
-      - WEBUI_AUTH=False
-      - ENABLE_OPENAI_API=True
+      - WEBUI_AUTH=false
+      - ENABLE_OPENAI_API=true
+      - ENABLE_OLLAMA_API=false
       - OPENAI_API_BASE_URL=http://processor:8080/v1
+      - OPENAI_API_BASE_URLS=http://processor:8080/v1
       - OPENAI_API_KEY=local-offline
+      - OPENAI_API_KEYS=local-offline
+      - DEFAULT_MODELS=local-rag
     volumes:
       - open_webui_data:/app/backend/data
 

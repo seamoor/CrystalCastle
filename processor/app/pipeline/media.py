@@ -39,6 +39,7 @@ class MediaProcessor:
         if self.ocr_enabled:
             try:
                 import paddle  # noqa: F401
+                logger.info("Paddle runtime detected. Slide OCR is enabled.")
             except Exception as exc:  # noqa: BLE001
                 self.ocr_enabled = False
                 self._ocr_unavailable_reason = str(exc)
@@ -224,9 +225,8 @@ class MediaProcessor:
         try:
             from paddleocr import PaddleOCR
 
-            lang = "en"
-            if "pl" in self.ocr_languages and "en" not in self.ocr_languages:
-                lang = "latin"
+            # 'latin' covers English + Polish characters better than 'en'.
+            lang = "latin" if any(l in {"pl", "en"} for l in self.ocr_languages) else "en"
             return PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
         except Exception as exc:  # noqa: BLE001
             logger.warning("PaddleOCR unavailable, skipping OCR: %s", exc)

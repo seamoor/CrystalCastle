@@ -29,6 +29,7 @@ watcher: WatchService | None = None
 ingest_service: IngestService | None = None
 query_service: QueryService | None = None
 dashboard_service: DashboardService | None = None
+OPENAI_MODEL_ID = "local-rag"
 
 
 @asynccontextmanager
@@ -93,6 +94,13 @@ def dashboard_stats() -> DashboardStats:
     return dashboard_service.stats()
 
 
+@app.get("/debug/filenames")
+def debug_filenames() -> dict[str, list[str]]:
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return {"filenames": orchestrator.qdrant.list_filenames(limit=1000)}
+
+
 @app.get("/v1/models")
 def openai_models() -> dict[str, Any]:
     if not cfg:
@@ -101,10 +109,11 @@ def openai_models() -> dict[str, Any]:
         "object": "list",
         "data": [
             {
-                "id": cfg.llm.model,
+                "id": OPENAI_MODEL_ID,
                 "object": "model",
                 "created": 0,
                 "owned_by": "local",
+                "meta": {"backend_model": cfg.llm.model},
             }
         ],
     }
@@ -136,7 +145,7 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
                 "id": "chatcmpl-local",
                 "object": "chat.completion.chunk",
                 "created": 0,
-                "model": cfg.llm.model,
+                "model": OPENAI_MODEL_ID,
                 "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
             }
             yield f"data: {json.dumps(first_chunk)}\n\n"
@@ -145,7 +154,7 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
                 "id": "chatcmpl-local",
                 "object": "chat.completion.chunk",
                 "created": 0,
-                "model": cfg.llm.model,
+                "model": OPENAI_MODEL_ID,
                 "choices": [{"index": 0, "delta": {"content": result.answer}, "finish_reason": None}],
             }
             yield f"data: {json.dumps(content_chunk)}\n\n"
@@ -154,7 +163,7 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
                 "id": "chatcmpl-local",
                 "object": "chat.completion.chunk",
                 "created": 0,
-                "model": cfg.llm.model,
+                "model": OPENAI_MODEL_ID,
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             }
             yield f"data: {json.dumps(final_chunk)}\n\n"
@@ -166,7 +175,7 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
         "id": "chatcmpl-local",
         "object": "chat.completion",
         "created": 0,
-        "model": cfg.llm.model,
+        "model": OPENAI_MODEL_ID,
         "choices": [
             {
                 "index": 0,
