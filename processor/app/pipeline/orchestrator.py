@@ -66,6 +66,12 @@ class PipelineOrchestrator:
 
         doc_id = str(uuid.uuid4())
         now = datetime.now(UTC)
+        logger.info(
+            "Indexing started: doc_id=%s path=%s type=%s",
+            doc_id,
+            file_path,
+            ext_type,
+        )
         self.state_store.upsert(
             IndexedDocument(
                 doc_id=doc_id,
@@ -77,7 +83,14 @@ class PipelineOrchestrator:
         )
 
         try:
+            logger.info("Extract phase started: doc_id=%s path=%s", doc_id, file_path)
             result = self._extract(file_path, ext_type)
+            logger.info(
+                "Extract phase finished: doc_id=%s language=%s duration_seconds=%.2f",
+                doc_id,
+                result.get("language"),
+                float(result.get("duration_seconds", 0.0) or 0.0),
+            )
             text = result.get("text", "")
             if not text.strip():
                 raise ValueError("No text extracted from file")
@@ -89,11 +102,21 @@ class PipelineOrchestrator:
             )
             if not chunks:
                 raise ValueError("Chunking returned no chunks")
+            logger.info("Chunking finished: doc_id=%s chunks=%d", doc_id, len(chunks))
 
             chunk_texts = [c.text for c in chunks]
+            logger.info("Embedding phase started: doc_id=%s", doc_id)
             vectors = self.embedding.embed(chunk_texts)
+            logger.info("Embedding phase finished: doc_id=%s vectors=%d", doc_id, len(vectors))
 
+            logger.info("Summary/tag phase started: doc_id=%s", doc_id)
             summary, tags, llm_language = self.llm.summarize_and_tag(text)
+            logger.info(
+                "Summary/tag phase finished: doc_id=%s tags=%d llm_language=%s",
+                doc_id,
+                len(tags),
+                llm_language,
+            )
             language = result.get("language") or llm_language
             speakers = result.get("speakers", [])
             duration = float(result.get("duration_seconds", 0.0) or 0.0)
@@ -121,7 +144,9 @@ class PipelineOrchestrator:
                     }
                 )
 
+            logger.info("Qdrant upsert started: doc_id=%s points=%d", doc_id, len(payloads))
             self.qdrant.upsert_chunks(vectors=vectors, payloads=payloads)
+            logger.info("Qdrant upsert finished: doc_id=%s", doc_id)
             self.state_store.upsert(
                 IndexedDocument(
                     doc_id=doc_id,
@@ -135,9 +160,21 @@ class PipelineOrchestrator:
                     status="indexed",
                 )
             )
-            logger.info("Indexed file: %s (chunks=%d)", file_path, len(chunks))
+            logger.info(
+                "Indexing finished: doc_id=%s path=%s status=indexed chunks=%d tags=%d speakers=%d",
+                doc_id,
+                file_path,
+                len(chunks),
+                len(tags),
+                len(speakers),
+            )
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Failed to process %s", file_path)
+            logger.exception(
+                "Indexing failed: doc_id=%s path=%s error=%s",
+                doc_id,
+                file_path,
+                exc,
+            )
             self.state_store.upsert(
                 IndexedDocument(
                     doc_id=doc_id,

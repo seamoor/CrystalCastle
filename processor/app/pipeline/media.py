@@ -38,17 +38,29 @@ class MediaProcessor:
     def process(self, path: Path) -> dict:
         work_dir = self.data_dir / "jobs" / path.stem
         work_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Media processing started: path=%s work_dir=%s", path, work_dir)
 
         audio_path = work_dir / "audio.wav"
+        logger.info("Extracting audio track: input=%s output=%s", path, audio_path)
         self._extract_audio(path, audio_path)
 
+        logger.info("Transcription started: audio=%s", audio_path)
         transcript = self._transcribe(audio_path)
         segments = transcript["segments"]
+        logger.info(
+            "Transcription finished: language=%s segments=%d",
+            transcript.get("language"),
+            len(segments),
+        )
 
+        logger.info("Diarization started: audio=%s enabled=%s", audio_path, self.diarization_service.enabled)
         speakers = self.diarization_service.diarize(audio_path)
         segments = align_speakers(segments, speakers)
+        logger.info("Diarization finished: speaker_segments=%d", len(speakers))
 
+        logger.info("Slide OCR started: media=%s enabled=%s", path, self.ocr_enabled)
         slide_text = self._extract_slides_text(path, work_dir)
+        logger.info("Slide OCR finished: extracted_chars=%d", len(slide_text))
         transcript_text = "\n".join(
             self._segment_to_line(seg) for seg in segments
         )
@@ -61,6 +73,12 @@ class MediaProcessor:
         speaker_names = sorted({s.get("speaker", "Speaker 1") for s in segments if s.get("speaker")})
 
         shutil.rmtree(work_dir, ignore_errors=True)
+        logger.info(
+            "Media processing finished: path=%s duration_seconds=%.2f speakers=%d",
+            path,
+            duration,
+            len(speaker_names),
+        )
         return {
             "text": merged_text,
             "language": transcript.get("language"),
@@ -125,8 +143,16 @@ class MediaProcessor:
         frames_dir = work_dir / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
         self._sample_frames(media_path, frames_dir)
+        total_frames = len(list(frames_dir.glob("*.jpg")))
+        logger.info("Slide OCR frame sampling finished: media=%s frames=%d", media_path, total_frames)
 
         unique_frames = self._deduplicate_frames(sorted(frames_dir.glob("*.jpg")))
+        logger.info(
+            "Slide OCR frame dedup finished: media=%s unique_frames=%d threshold=%d",
+            media_path,
+            len(unique_frames),
+            self.slide_change_threshold,
+        )
         if not unique_frames:
             return ""
 

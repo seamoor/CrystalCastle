@@ -26,6 +26,18 @@ class WatchHandler(FileSystemEventHandler):
         path = Path(event.src_path)
         if path.suffix.lower() in self.supported_ext:
             self.ingest_queue.put(path)
+            logger.info(
+                "Detected new file in watch dir: path=%s ext=%s queued=true queue_size=%d",
+                path,
+                path.suffix.lower(),
+                self.ingest_queue.qsize(),
+            )
+        else:
+            logger.info(
+                "Detected new file in watch dir but unsupported: path=%s ext=%s",
+                path,
+                path.suffix.lower(),
+            )
 
 
 class WatchService:
@@ -49,6 +61,7 @@ class WatchService:
 
     def start(self) -> None:
         self.watch_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Scanning existing files in watch dir: %s", self.watch_dir)
         self._enqueue_existing_files()
 
         handler = WatchHandler(self.ingest_queue, self.supported_extensions)
@@ -70,12 +83,25 @@ class WatchService:
 
     def enqueue_path(self, path: Path) -> None:
         self.ingest_queue.put(path)
+        logger.info(
+            "File queued via API/manual enqueue: path=%s queue_size=%d",
+            path,
+            self.ingest_queue.qsize(),
+        )
 
     def _enqueue_existing_files(self) -> None:
+        queued = 0
         for path in self.watch_dir.rglob("*"):
             if path.is_file() and path.suffix.lower() in self.supported_extensions:
                 if not self.state_store.seen_success(path):
                     self.ingest_queue.put(path)
+                    queued += 1
+                    logger.info(
+                        "Queued existing file from watch dir: path=%s queue_size=%d",
+                        path,
+                        self.ingest_queue.qsize(),
+                    )
+        logger.info("Initial watch-dir scan finished: queued_files=%d", queued)
 
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -85,14 +111,24 @@ class WatchService:
                 continue
 
             if not path.exists() or path.suffix.lower() not in self.supported_extensions:
+                logger.warning(
+                    "Skipping queue item: path=%s reason=%s",
+                    path,
+                    "missing_or_unsupported",
+                )
+                self.ingest_queue.task_done()
                 continue
 
             if self.state_store.seen_success(path):
+                logger.info("Skipping queue item: path=%s reason=already_indexed", path)
+                self.ingest_queue.task_done()
                 continue
 
             try:
+                logger.info("Processing started: path=%s queue_size=%d", path, self.ingest_queue.qsize())
                 self._wait_until_stable(path)
                 self.orchestrator.process_file(path)
+                logger.info("Processing finished: path=%s status=success", path)
             except Exception:  # noqa: BLE001
                 logger.exception("Queue worker failed for %s", path)
             finally:
