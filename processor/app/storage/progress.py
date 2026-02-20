@@ -8,12 +8,13 @@ from typing import Any
 class ProgressStore:
     STAGE_WEIGHTS: dict[str, float] = {
         "extract_audio": 0.05,
-        "transcription": 0.45,
+        "transcription": 0.40,
         "ocr_sampling": 0.10,
         "ocr_inference": 0.15,
         "vision_inference": 0.10,
         "chunking": 0.05,
         "embedding": 0.05,
+        "summary_tagging": 0.05,
         "upsert": 0.05,
     }
 
@@ -86,9 +87,10 @@ class ProgressStore:
         if file_type in {"pdf", "pptx"}:
             mapping = {
                 "extract": (0.0, 0.60),
-                "chunking": (0.60, 0.75),
-                "embedding": (0.75, 0.90),
-                "upsert": (0.90, 1.00),
+                "chunking": (0.60, 0.72),
+                "embedding": (0.72, 0.84),
+                "summary_tagging": (0.84, 0.94),
+                "upsert": (0.94, 1.00),
             }
             start, end = mapping.get(stage, (0.0, 0.05))
             return start + (end - start) * stage_progress
@@ -101,6 +103,7 @@ class ProgressStore:
             "vision_inference",
             "chunking",
             "embedding",
+            "summary_tagging",
             "upsert",
         ]
         if stage not in self.STAGE_WEIGHTS:

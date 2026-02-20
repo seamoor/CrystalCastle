@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -130,7 +131,14 @@ class PipelineOrchestrator:
             logger.info("Embedding phase finished: doc_id=%s vectors=%d", doc_id, len(vectors))
 
             logger.info("Summary/tag phase started: doc_id=%s", doc_id)
-            summary, tags, llm_language = self.llm.summarize_and_tag(text)
+            self.progress_store.update(doc_id, "summary_tagging", 0.0, {"status": "started"})
+            summary, tags, llm_language = self._summarize_with_heartbeat(doc_id, text)
+            self.progress_store.update(
+                doc_id,
+                "summary_tagging",
+                1.0,
+                {"status": "finished", "tags": len(tags), "language": llm_language},
+            )
             logger.info(
                 "Summary/tag phase finished: doc_id=%s tags=%d llm_language=%s",
                 doc_id,
@@ -228,6 +236,31 @@ class PipelineOrchestrator:
         if ext_type == "pptx":
             return {"text": extract_pptx_text(file_path), "language": None, "duration_seconds": 0.0, "segments": []}
         return {"text": "", "segments": []}
+
+    def _summarize_with_heartbeat(self, doc_id: str, text: str) -> tuple[str, list[str], str]:
+        logger.info("Summary/tag heartbeat started: doc_id=%s interval_seconds=30", doc_id)
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(self.llm.summarize_and_tag, text)
+            beats = 0
+            while True:
+                try:
+                    return future.result(timeout=30)
+                except TimeoutError:
+                    beats += 1
+                    stage_progress = min(0.95, 0.10 + 0.08 * beats)
+                    overall = self.progress_store.update(
+                        doc_id,
+                        "summary_tagging",
+                        stage_progress,
+                        {"heartbeat": beats, "status": "running"},
+                    )
+                    if overall is not None:
+                        logger.info(
+                            "Summary/tag heartbeat: doc_id=%s stage_progress=%.1f%% overall_progress=%.1f%%",
+                            doc_id,
+                            stage_progress * 100.0,
+                            overall * 100.0,
+                        )
 
 
 def _chunk_timestamps(chunk_text_value: str, segments: list[dict]) -> tuple[float | None, float | None]:
