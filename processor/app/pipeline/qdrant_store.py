@@ -114,7 +114,7 @@ class QdrantStore:
         conditions: list[models.FieldCondition] = []
         if filename := filters.get("filename"):
             conditions.append(
-                models.FieldCondition(key="filename", match=models.MatchText(text=str(filename)))
+                models.FieldCondition(key="filename", match=models.MatchValue(value=str(filename)))
             )
         if tags := filters.get("tags"):
             for tag in tags if isinstance(tags, list) else [tags]:

@@ -59,6 +59,12 @@ class QueryService:
         merged = dict(filters or {})
         if "filename" not in merged:
             match = re.search(r"<([^>]+\.(?:mp4|mkv|mov|mp3|wav|m4a|pdf|pptx))>", query_text, flags=re.IGNORECASE)
+            if not match:
+                match = re.search(
+                    r"([A-Za-z0-9 _\-.]+\.(?:mp4|mkv|mov|mp3|wav|m4a|pdf|pptx))",
+                    query_text,
+                    flags=re.IGNORECASE,
+                )
             if match:
-                merged["filename"] = match.group(1)
+                merged["filename"] = match.group(1).strip()
         return merged or None
