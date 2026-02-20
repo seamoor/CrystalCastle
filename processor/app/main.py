@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+import json
 
 from app.config import AppConfig, load_config
 from app.logging_config import setup_logging
@@ -125,6 +127,39 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
     top_k = int(payload.get("top_k", 8))
 
     result = query_service.query(query_text=query_text, top_k=top_k, filters=filters)
+    stream = bool(payload.get("stream", False))
+
+    if stream:
+        def event_stream():
+            first_chunk = {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": cfg.llm.model,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(first_chunk)}\n\n"
+
+            content_chunk = {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": cfg.llm.model,
+                "choices": [{"index": 0, "delta": {"content": result.answer}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(content_chunk)}\n\n"
+
+            final_chunk = {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": cfg.llm.model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            }
+            yield f"data: {json.dumps(final_chunk)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")  # type: ignore[return-value]
 
     return {
         "id": "chatcmpl-local",

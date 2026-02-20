@@ -15,6 +15,7 @@ class LLMService:
         self.model = model
         self.enabled = enabled
         self.timeout_seconds = timeout_seconds
+        self._disabled_due_to_error = False
 
     def summarize_and_tag(self, text: str) -> tuple[str, list[str], str]:
         if not self.enabled:
@@ -46,26 +47,36 @@ class LLMService:
 
     def answer(self, query: str, context: str) -> str:
         if not self.enabled:
-            return "Local LLM disabled. Returning retrieval context only.\n\n" + context[:2000]
+            if context.strip():
+                return "Local LLM unavailable. Returning retrieval context only.\n\n" + context[:2000]
+            return "Local LLM unavailable and no indexed context matched the query."
         prompt = (
             "Answer using only the provided context. If missing, say you don't know. "
             "Answer in the language of the question (Polish or English).\n\n"
             f"Question: {query}\n\nContext:\n{context[:12000]}"
         )
         response = self._generate(prompt)
-        return response or "No answer generated."
+        if response:
+            return response
+        if context.strip():
+            return "No model response. Returning retrieval context only.\n\n" + context[:2000]
+        return "No model response and no indexed context matched the query."
 
     def _generate(self, prompt: str) -> str:
         try:
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 json={"model": self.model, "prompt": prompt, "stream": False},
-                timeout=self.timeout_seconds,
+                timeout=(3, self.timeout_seconds),
             )
             response.raise_for_status()
             return response.json().get("response", "")
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM request failed: %s", exc)
+            if not self._disabled_due_to_error:
+                logger.warning("Disabling local LLM after request failure. Set llm.enabled=true once Ollama is available.")
+                self._disabled_due_to_error = True
+            self.enabled = False
             return ""
 
     @staticmethod

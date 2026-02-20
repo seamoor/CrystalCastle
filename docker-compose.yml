@@ -12,7 +12,6 @@ services:
     image: ollama/ollama:0.5.7
     container_name: ollama
     restart: unless-stopped
-    profiles: ["ollama"]
     ports:
       - "11434:11434"
     volumes:
@@ -26,6 +25,7 @@ services:
     restart: unless-stopped
     depends_on:
       - qdrant
+      - ollama
     ports:
       - "8080:8080"
     environment:
@@ -54,6 +54,7 @@ services:
     profiles: ["nvidia"]
     depends_on:
       - qdrant
+      - ollama
     ports:
       - "8081:8080"
     environment:

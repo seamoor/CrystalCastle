@@ -67,7 +67,7 @@ All services run locally in Docker. No paid/cloud API is required.
 ### 1. Start core services (CPU)
 
 ```bash
-docker compose up -d --build qdrant processor open-webui
+docker compose up -d --build
 ```
 
 Open UI: `http://localhost:3000`
@@ -76,13 +76,7 @@ Processor API: `http://localhost:8080`
 
 Qdrant: `http://localhost:6333`
 
-### 2. (Optional) Start Ollama locally
-
-```bash
-docker compose --profile ollama up -d ollama
-```
-
-Load a local model:
+### 2. Load a local Ollama model (one-time per model)
 
 ```bash
 docker exec -it ollama ollama pull llama3.1:8b
@@ -156,7 +150,7 @@ Notes:
 CPU mode is default and works on arm64 images.
 
 ```bash
-docker compose up -d --build qdrant processor open-webui
+docker compose up -d --build
 ```
 
 Notes:

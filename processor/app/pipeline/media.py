@@ -34,6 +34,19 @@ class MediaProcessor:
         self.slide_change_threshold = slide_change_threshold
         self.ocr_languages = ocr_languages
         self.diarization_service = diarization_service
+        self._ocr_unavailable_reason: str | None = None
+
+        if self.ocr_enabled:
+            try:
+                import paddle  # noqa: F401
+            except Exception as exc:  # noqa: BLE001
+                self.ocr_enabled = False
+                self._ocr_unavailable_reason = str(exc)
+                logger.warning(
+                    "Disabling OCR because paddle runtime is unavailable: %s. "
+                    "Install paddlepaddle in the processor image or set ocr.enabled=false.",
+                    exc,
+                )
 
     def process(self, path: Path) -> dict:
         work_dir = self.data_dir / "jobs" / path.stem
@@ -138,6 +151,8 @@ class MediaProcessor:
 
     def _extract_slides_text(self, media_path: Path, work_dir: Path) -> str:
         if not self.ocr_enabled or media_path.suffix.lower() in {".mp3", ".wav", ".m4a"}:
+            if self._ocr_unavailable_reason:
+                logger.info("Slide OCR skipped: media=%s reason=paddle_unavailable", media_path)
             return ""
 
         frames_dir = work_dir / "frames"
