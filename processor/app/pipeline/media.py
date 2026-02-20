@@ -298,7 +298,15 @@ class MediaProcessor:
             ocr_text = "\n".join(texts)
 
         self._report(progress_cb, "vision_inference", 0.0, {"unique_frames": len(unique_frames)})
-        vision_descriptions = self.vision_service.describe_frames(unique_frames)
+        logger.info(
+            "Slide vision reasoning started: media=%s frames=%d interval_seconds=30",
+            media_path,
+            min(len(unique_frames), self.vision_service.max_frames),
+        )
+        vision_descriptions = self.vision_service.describe_frames_with_progress(
+            unique_frames,
+            progress_cb=lambda p, d: self._vision_progress(media_path, progress_cb, p, d),
+        )
         self._report(
             progress_cb,
             "vision_inference",
@@ -308,6 +316,27 @@ class MediaProcessor:
         vision_text = "\n".join(vision_descriptions)
         logger.info("Slide vision reasoning finished: media=%s descriptions=%d", media_path, len(vision_descriptions))
         return ocr_text, vision_text
+
+    def _vision_progress(
+        self,
+        media_path: Path,
+        progress_cb: Callable[[str, float, dict[str, Any] | None], None] | None,
+        progress: float,
+        details: dict[str, Any] | None,
+    ) -> None:
+        payload = details or {}
+        processed = int(payload.get("processed_frames", 0))
+        total = int(payload.get("total_frames", 0))
+        descriptions = int(payload.get("descriptions", 0))
+        logger.info(
+            "Slide vision heartbeat: media=%s processed_frames=%d total_frames=%d descriptions=%d stage_progress=%.1f%%",
+            media_path,
+            processed,
+            total,
+            descriptions,
+            progress * 100.0,
+        )
+        self._report(progress_cb, "vision_inference", progress, payload)
 
     def _sample_frames(self, media_path: Path, frames_dir: Path) -> None:
         logger.info(
