@@ -9,8 +9,9 @@ from pptx import Presentation
 def extract_pdf_text(path: Path) -> str:
     reader = PdfReader(str(path))
     pages = []
-    for page in reader.pages:
-        pages.append(page.extract_text() or "")
+    for i, page in enumerate(reader.pages, start=1):
+        body = page.extract_text() or ""
+        pages.append(f"Page {i}\n{body}")
     return "\n".join(pages)
 
 

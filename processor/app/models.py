@@ -13,6 +13,10 @@ class SourceRef(BaseModel):
     score: float
     timestamp_start: float | None = None
     timestamp_end: float | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    slide_start: int | None = None
+    slide_end: int | None = None
     text_preview: str
 
 

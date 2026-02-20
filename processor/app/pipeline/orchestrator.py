@@ -5,6 +5,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 
 from app.config import AppConfig
 from app.models import IndexedDocument
@@ -153,11 +154,13 @@ class PipelineOrchestrator:
             payloads = []
             for c in chunks:
                 ts_start, ts_end = _chunk_timestamps(c.text, segments)
+                page_start, page_end, slide_start, slide_end = _chunk_doc_refs(c.text)
                 payloads.append(
                     {
                         "doc_id": doc_id,
                         "filename": file_path.name,
                         "path": str(file_path),
+                        "file_type": ext_type,
                         "chunk_id": f"{doc_id}:{c.index}",
                         "chunk_index": c.index,
                         "text": c.text,
@@ -169,6 +172,10 @@ class PipelineOrchestrator:
                         "duration_seconds": duration,
                         "timestamp_start": ts_start,
                         "timestamp_end": ts_end,
+                        "page_start": page_start,
+                        "page_end": page_end,
+                        "slide_start": slide_start,
+                        "slide_end": slide_end,
                     }
                 )
 
@@ -277,3 +284,14 @@ def _chunk_timestamps(chunk_text_value: str, segments: list[dict]) -> tuple[floa
                 first = float(seg.get("start", 0.0))
             last = float(seg.get("end", 0.0))
     return first, last
+
+
+def _chunk_doc_refs(chunk_text_value: str) -> tuple[int | None, int | None, int | None, int | None]:
+    pages = [int(x) for x in re.findall(r"\bPage\s+(\d+)\b", chunk_text_value, flags=re.IGNORECASE)]
+    slides = [int(x) for x in re.findall(r"\bSlide\s+(\d+)\b", chunk_text_value, flags=re.IGNORECASE)]
+
+    page_start = min(pages) if pages else None
+    page_end = max(pages) if pages else None
+    slide_start = min(slides) if slides else None
+    slide_end = max(slides) if slides else None
+    return page_start, page_end, slide_start, slide_end

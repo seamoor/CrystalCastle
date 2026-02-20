@@ -48,6 +48,10 @@ class QueryService:
                     score=float(hit.score),
                     timestamp_start=payload.get("timestamp_start"),
                     timestamp_end=payload.get("timestamp_end"),
+                    page_start=payload.get("page_start"),
+                    page_end=payload.get("page_end"),
+                    slide_start=payload.get("slide_start"),
+                    slide_end=payload.get("slide_end"),
                     text_preview=text[:260],
                 )
             )
@@ -63,6 +67,10 @@ class QueryService:
                     src_block.append(
                         f"- {s.filename} [{s.timestamp_start:.2f}s-{(s.timestamp_end or 0.0):.2f}s]"
                     )
+                elif s.slide_start is not None:
+                    src_block.append(f"- {s.filename} [{_format_range('slide', s.slide_start, s.slide_end)}]")
+                elif s.page_start is not None:
+                    src_block.append(f"- {s.filename} [{_format_range('page', s.page_start, s.page_end)}]")
                 else:
                     src_block.append(f"- {s.filename}")
             answer += "\n" + "\n".join(src_block)
@@ -92,6 +100,10 @@ class QueryService:
                     score=1.0,
                     timestamp_start=payload.get("timestamp_start"),
                     timestamp_end=payload.get("timestamp_end"),
+                    page_start=payload.get("page_start"),
+                    page_end=payload.get("page_end"),
+                    slide_start=payload.get("slide_start"),
+                    slide_end=payload.get("slide_end"),
                     text_preview=text[:260],
                 )
             )
@@ -102,6 +114,10 @@ class QueryService:
         for s in sources:
             if s.timestamp_start is not None:
                 src_block.append(f"- {s.filename} [{s.timestamp_start:.2f}s-{(s.timestamp_end or 0.0):.2f}s]")
+            elif s.slide_start is not None:
+                src_block.append(f"- {s.filename} [{_format_range('slide', s.slide_start, s.slide_end)}]")
+            elif s.page_start is not None:
+                src_block.append(f"- {s.filename} [{_format_range('page', s.page_start, s.page_end)}]")
             else:
                 src_block.append(f"- {s.filename}")
         answer += "\n" + "\n".join(src_block)
@@ -145,3 +161,11 @@ class QueryService:
             if match:
                 merged["filename"] = match.group(1).strip()
         return merged or None
+
+
+def _format_range(label: str, start: int | None, end: int | None) -> str:
+    if start is None:
+        return f"{label}:?"
+    if end is None or end == start:
+        return f"{label}:{start}"
+    return f"{label}s:{start}-{end}"

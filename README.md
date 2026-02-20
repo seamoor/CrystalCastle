@@ -199,6 +199,10 @@ Per chunk:
 - `text`, `summary`
 - `date_indexed`, `language`, `tags`, `speakers`
 - `duration_seconds`, `timestamp_start`, `timestamp_end`
+- `page_start`, `page_end` (PDF)
+- `slide_start`, `slide_end` (PPTX)
+
+Note: slide/page source references appear for newly indexed documents. Reindex existing files to backfill these fields.
 
 ## Platform Notes
 
