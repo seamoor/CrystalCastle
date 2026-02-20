@@ -51,15 +51,18 @@ class LLMService:
                 return "Local LLM unavailable. Returning retrieval context only.\n\n" + context[:2000]
             return "Local LLM unavailable and no indexed context matched the query."
         prompt = (
-            "Answer using only the provided context. If missing, say you don't know. "
+            "You are an offline assistant for the user's own authorized internal training notes. "
+            "The context below comes from files the user indexed locally. "
+            "Answer using only the provided context. Do not refuse unless context is empty. "
+            "If context is empty, say you do not have enough indexed data yet. "
             "Answer in the language of the question (Polish or English).\n\n"
             f"Question: {query}\n\nContext:\n{context[:12000]}"
         )
         response = self._generate(prompt)
-        if response:
+        if response and not self._looks_like_refusal(response):
             return response
         if context.strip():
-            return "No model response. Returning retrieval context only.\n\n" + context[:2000]
+            return self._fallback_from_context(query, context)
         return "No model response and no indexed context matched the query."
 
     def _generate(self, prompt: str) -> str:
@@ -91,3 +94,31 @@ class LLMService:
     def _guess_language(text: str) -> str:
         polish_chars = {"ą", "ć", "ę", "ł", "ń", "ó", "ś", "ź", "ż"}
         return "pl" if any(ch in text.lower() for ch in polish_chars) else "en"
+
+    @staticmethod
+    def _looks_like_refusal(text: str) -> bool:
+        low = text.lower()
+        refusal_markers = [
+            "nie mogę",
+            "nie moge",
+            "i can't",
+            "i cannot",
+            "can't help with",
+            "nie mogę udostępnić",
+            "nie moge udostepnic",
+            "illegal",
+            "szkodliwe",
+        ]
+        return any(marker in low for marker in refusal_markers)
+
+    @staticmethod
+    def _fallback_from_context(query: str, context: str) -> str:
+        lines = [line.strip() for line in context.splitlines() if line.strip()]
+        top = lines[:10]
+        if not top:
+            return "No indexed context matched the query."
+        return (
+            "Model returned a refusal or empty answer. Returning context-based summary fallback.\n\n"
+            f"Query: {query}\n"
+            + "\n".join(f"- {line}" for line in top)
+        )

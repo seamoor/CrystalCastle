@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.models import QueryResponse, SourceRef
 from app.pipeline.embeddings import EmbeddingService
 from app.pipeline.llm import LLMService
@@ -13,8 +15,9 @@ class QueryService:
         self.llm = llm
 
     def query(self, query_text: str, top_k: int = 8, filters: dict | None = None) -> QueryResponse:
+        merged_filters = self._merge_filters_with_filename_hint(query_text, filters)
         query_vector = self.embedding.embed([query_text])[0]
-        results = self.qdrant.search(query_vector=query_vector, top_k=top_k, filters=filters)
+        results = self.qdrant.search(query_vector=query_vector, top_k=top_k, filters=merged_filters)
 
         sources: list[SourceRef] = []
         contexts: list[str] = []
@@ -50,3 +53,12 @@ class QueryService:
             answer += "\n" + "\n".join(src_block)
 
         return QueryResponse(answer=answer, sources=sources)
+
+    @staticmethod
+    def _merge_filters_with_filename_hint(query_text: str, filters: dict | None) -> dict | None:
+        merged = dict(filters or {})
+        if "filename" not in merged:
+            match = re.search(r"<([^>]+\.(?:mp4|mkv|mov|mp3|wav|m4a|pdf|pptx))>", query_text, flags=re.IGNORECASE)
+            if match:
+                merged["filename"] = match.group(1)
+        return merged or None
