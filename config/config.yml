@@ -1,0 +1,45 @@
+whisper:
+  model_size: small
+  device: auto
+  compute_type: int8
+
+diarization:
+  enabled: false
+  # Use a local model path for fully offline diarization, for example:
+  # model_path: /models/pyannote/speaker-diarization-3.1
+  model_path: null
+  min_speakers: null
+  max_speakers: null
+
+ocr:
+  enabled: true
+  fps: 0.2
+  slide_change_threshold: 10
+  languages: [en, pl]
+
+chunking:
+  chunk_size: 900
+  chunk_overlap: 160
+
+embedding:
+  model_name: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  normalize_embeddings: true
+
+llm:
+  enabled: true
+  model: llama3.1:8b
+  base_url: http://ollama:11434
+  timeout_seconds: 180
+
+qdrant:
+  host: qdrant
+  port: 6333
+  collection_name: knowledge_chunks
+
+processor:
+  watch_dir: /watch
+  data_dir: /data
+  models_dir: /models
+  gpu_enabled: false
+  poll_interval_seconds: 2.0
+  supported_extensions: [.mp4, .mkv, .mov, .mp3, .wav, .m4a, .pdf, .pptx]

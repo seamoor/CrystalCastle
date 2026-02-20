@@ -1,0 +1,7 @@
+{
+    "python.testing.pytestArgs": [
+        "processor"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}
