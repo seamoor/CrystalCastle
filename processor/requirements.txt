@@ -9,7 +9,7 @@ pypdf==5.0.1
 python-pptx==1.0.2
 watchdog==5.0.3
 requests==2.32.3
-python-multipart==0.0.10
+python-multipart==0.0.22
 faster-whisper==1.0.3
 Pillow==10.4.0
 opencv-python-headless==4.10.0.84
