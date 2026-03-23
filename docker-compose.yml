@@ -1,3 +1,30 @@
+x-processor-common: &processor-common
+  build:
+    context: ./processor
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  depends_on:
+    qdrant:
+      condition: service_healthy
+    ollama:
+      condition: service_healthy
+  environment: &processor-env
+    CONFIG_PATH: /app/config/config.yml
+    WATCH_DIR: /watch
+    DATA_DIR: /data
+    MODELS_DIR: /models
+    QDRANT_HOST: qdrant
+    QDRANT_PORT: "6333"
+    OLLAMA_BASE_URL: http://ollama:11434
+    HF_HOME: /models/hf
+    TRANSFORMERS_CACHE: /models/hf
+    TORCH_HOME: /models/torch
+  volumes:
+    - ./watch:/watch
+    - ./config:/app/config
+    - ./models:/models
+    - processor_data:/data
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.13.4
@@ -7,6 +34,11 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   ollama:
     image: ollama/ollama:0.5.7
@@ -16,69 +48,38 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   processor:
-    build:
-      context: ./processor
-      dockerfile: Dockerfile
+    <<: *processor-common
     container_name: processor
-    restart: unless-stopped
-    depends_on:
-      - qdrant
-      - ollama
     ports:
       - "8080:8080"
-    environment:
-      - CONFIG_PATH=/app/config/config.yml
-      - WATCH_DIR=/watch
-      - DATA_DIR=/data
-      - MODELS_DIR=/models
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - HF_HOME=/models/hf
-      - TRANSFORMERS_CACHE=/models/hf
-      - TORCH_HOME=/models/torch
-    volumes:
-      - ./watch:/watch
-      - ./config:/app/config
-      - ./models:/models
-      - processor_data:/data
 
   processor-nvidia:
-    build:
-      context: ./processor
-      dockerfile: Dockerfile
+    <<: *processor-common
     container_name: processor-nvidia
-    restart: unless-stopped
     profiles: ["nvidia"]
-    depends_on:
-      - qdrant
-      - ollama
     ports:
       - "8081:8080"
     environment:
-      - CONFIG_PATH=/app/config/config.yml
-      - WATCH_DIR=/watch
-      - DATA_DIR=/data
-      - MODELS_DIR=/models
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - HF_HOME=/models/hf
-      - TRANSFORMERS_CACHE=/models/hf
-      - TORCH_HOME=/models/torch
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-    volumes:
-      - ./watch:/watch
-      - ./config:/app/config
-      - ./models:/models
-      - processor_data:/data
-    gpus: all
+      <<: *processor-env
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.6.5
     container_name: open-webui
     restart: unless-stopped
     depends_on:

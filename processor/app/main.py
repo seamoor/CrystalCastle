@@ -11,7 +11,7 @@ import json
 
 from app.config import AppConfig, load_config
 from app.logging_config import setup_logging
-from app.models import DashboardStats, IngestResponse, QueryRequest, QueryResponse
+from app.models import DashboardStats, IngestRequest, IngestResponse, QueryRequest, QueryResponse
 from app.pipeline.orchestrator import PipelineOrchestrator
 from app.services.dashboard_service import DashboardService
 from app.services.ingest_service import IngestService
@@ -111,15 +111,11 @@ def debug_jobs_by_filename(filename: str) -> dict[str, list[dict[str, Any]]]:
 
 
 @app.post("/ingest", response_model=IngestResponse)
-def ingest(payload: dict[str, Any]) -> IngestResponse:
+def ingest(payload: IngestRequest) -> IngestResponse:
     if not ingest_service:
         raise HTTPException(status_code=503, detail="Service not ready")
-    path = payload.get("path")
-    if not path:
-        raise HTTPException(status_code=400, detail="Missing path")
-    force = bool(payload.get("force", False))
-    logger.info("Ingest request received: path=%s force=%s", path, force)
-    return ingest_service.enqueue(str(path), force=force)
+    logger.info("Ingest request received: path=%s force=%s", payload.path, payload.force)
+    return ingest_service.enqueue(payload.path, force=payload.force)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -178,7 +174,6 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
     filters = payload.get("filters") or payload.get("metadata", {}).get("filters")
     top_k = int(payload.get("top_k", 8))
 
-    result = query_service.query(query_text=query_text, top_k=top_k, filters=filters)
     stream = bool(payload.get("stream", False))
 
     if stream:
@@ -192,14 +187,15 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
             }
             yield f"data: {json.dumps(first_chunk)}\n\n"
 
-            content_chunk = {
-                "id": "chatcmpl-local",
-                "object": "chat.completion.chunk",
-                "created": 0,
-                "model": OPENAI_MODEL_ID,
-                "choices": [{"index": 0, "delta": {"content": result.answer}, "finish_reason": None}],
-            }
-            yield f"data: {json.dumps(content_chunk)}\n\n"
+            for token in query_service.query_stream(query_text=query_text, top_k=top_k, filters=filters):
+                content_chunk = {
+                    "id": "chatcmpl-local",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": OPENAI_MODEL_ID,
+                    "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
+                }
+                yield f"data: {json.dumps(content_chunk)}\n\n"
 
             final_chunk = {
                 "id": "chatcmpl-local",
@@ -213,6 +209,7 @@ def openai_chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")  # type: ignore[return-value]
 
+    result = query_service.query(query_text=query_text, top_k=top_k, filters=filters)
     return {
         "id": "chatcmpl-local",
         "object": "chat.completion",

@@ -31,6 +31,9 @@ class StateStore:
                 )
                 """
             )
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path)"
+            )
 
     def upsert(self, doc: IndexedDocument) -> None:
         with sqlite3.connect(self.db_path) as con:

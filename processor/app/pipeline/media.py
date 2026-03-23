@@ -63,57 +63,60 @@ class MediaProcessor:
         work_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Media processing started: path=%s work_dir=%s", path, work_dir)
 
-        audio_path = work_dir / "audio.wav"
-        logger.info("Extracting audio track: input=%s output=%s", path, audio_path)
-        self._extract_audio(path, audio_path)
-        self._report(progress_cb, "extract_audio", 1.0, {"audio_path": str(audio_path)})
+        try:
+            audio_path = work_dir / "audio.wav"
+            logger.info("Extracting audio track: input=%s output=%s", path, audio_path)
+            self._extract_audio(path, audio_path)
+            self._report(progress_cb, "extract_audio", 1.0, {"audio_path": str(audio_path)})
 
-        audio_duration = _probe_duration_seconds(audio_path)
+            audio_duration = _probe_duration_seconds(audio_path)
 
-        logger.info("Transcription started: audio=%s", audio_path)
-        transcript = self._transcribe(audio_path, audio_duration=audio_duration, progress_cb=progress_cb)
-        segments = transcript["segments"]
-        logger.info(
-            "Transcription finished: language=%s segments=%d",
-            transcript.get("language"),
-            len(segments),
-        )
+            logger.info("Transcription started: audio=%s", audio_path)
+            transcript = self._transcribe(audio_path, audio_duration=audio_duration, progress_cb=progress_cb)
+            segments = transcript["segments"]
+            logger.info(
+                "Transcription finished: language=%s segments=%d",
+                transcript.get("language"),
+                len(segments),
+            )
 
-        logger.info("Diarization started: audio=%s enabled=%s", audio_path, self.diarization_service.enabled)
-        speakers = self.diarization_service.diarize(audio_path)
-        segments = align_speakers(segments, speakers)
-        logger.info("Diarization finished: speaker_segments=%d", len(speakers))
+            logger.info("Diarization started: audio=%s enabled=%s", audio_path, self.diarization_service.enabled)
+            speakers = self.diarization_service.diarize(audio_path)
+            segments = align_speakers(segments, speakers)
+            logger.info("Diarization finished: speaker_segments=%d", len(speakers))
 
-        logger.info("Slide OCR started: media=%s enabled=%s", path, self.ocr_enabled)
-        slide_text, vision_text = self._extract_slides_text(path, work_dir, progress_cb=progress_cb)
-        logger.info("Slide OCR finished: extracted_chars=%d", len(slide_text))
-        transcript_text = "\n".join(
-            self._segment_to_line(seg) for seg in segments
-        )
+            logger.info("Slide OCR started: media=%s enabled=%s", path, self.ocr_enabled)
+            slide_text, vision_text = self._extract_slides_text(path, work_dir, progress_cb=progress_cb)
+            logger.info("Slide OCR finished: extracted_chars=%d", len(slide_text))
+            transcript_text = "\n".join(
+                self._segment_to_line(seg) for seg in segments
+            )
 
-        merged_text = transcript_text
-        if slide_text:
-            merged_text += "\n\n[SLIDES OCR]\n" + slide_text
-        if vision_text:
-            merged_text += "\n\n[SLIDES VISION]\n" + vision_text
+            merged_text = transcript_text
+            if slide_text:
+                merged_text += "\n\n[SLIDES OCR]\n" + slide_text
+            if vision_text:
+                merged_text += "\n\n[SLIDES VISION]\n" + vision_text
 
-        duration = max((float(seg.get("end", 0.0)) for seg in segments), default=0.0)
-        speaker_names = sorted({s.get("speaker", "Speaker 1") for s in segments if s.get("speaker")})
+            duration = max((float(seg.get("end", 0.0)) for seg in segments), default=0.0)
+            speaker_names = sorted({s.get("speaker", "Speaker 1") for s in segments if s.get("speaker")})
 
-        shutil.rmtree(work_dir, ignore_errors=True)
-        logger.info(
-            "Media processing finished: path=%s duration_seconds=%.2f speakers=%d",
-            path,
-            duration,
-            len(speaker_names),
-        )
-        return {
-            "text": merged_text,
-            "language": transcript.get("language"),
-            "duration_seconds": duration,
-            "segments": segments,
-            "speakers": speaker_names,
-        }
+            result = {
+                "text": merged_text,
+                "language": transcript.get("language"),
+                "duration_seconds": duration,
+                "segments": segments,
+                "speakers": speaker_names,
+            }
+            logger.info(
+                "Media processing finished: path=%s duration_seconds=%.2f speakers=%d",
+                path,
+                duration,
+                len(speaker_names),
+            )
+            return result
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     def _extract_audio(self, input_path: Path, output_audio_path: Path) -> None:
         cmd = [

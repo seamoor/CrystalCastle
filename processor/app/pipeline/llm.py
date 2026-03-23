@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import requests
@@ -46,6 +47,76 @@ class LLMService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM JSON parsing failed: %s", exc)
             return "", [], self._guess_language(text)
+
+    def answer_stream(self, query: str, context: str) -> Iterator[str]:
+        """Yield tokens from Ollama as they are generated. Falls back to a single
+        chunk when streaming is unavailable or LLM is disabled."""
+        if not self.enabled:
+            fallback = (
+                "Local LLM unavailable. Returning retrieval context only.\n\n" + context[:2000]
+                if context.strip()
+                else "Local LLM unavailable and no indexed context matched the query."
+            )
+            yield fallback
+            return
+
+        now = time.monotonic()
+        if now < self._blocked_until:
+            logger.warning(
+                "LLM temporarily unavailable due to previous failures. retry_in_seconds=%.1f",
+                self._blocked_until - now,
+            )
+            if context.strip():
+                yield "Local LLM temporarily unavailable. Returning context only.\n\n" + context[:2000]
+            else:
+                yield "Local LLM temporarily unavailable and no indexed context matched the query."
+            return
+
+        prompt = (
+            "You are an offline assistant for the user's own authorized internal training notes. "
+            "The context below comes from files the user indexed locally. "
+            "Answer using only the provided context. Do not refuse unless context is empty. "
+            "If context is empty, say you do not have enough indexed data yet. "
+            "Answer in the language of the question (Polish or English).\n\n"
+            f"Question: {query}\n\nContext:\n{context[:12000]}"
+        )
+        payload = {"model": self.model, "prompt": prompt, "stream": True}
+        try:
+            with requests.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=(3, self.timeout_seconds),
+                stream=True,
+            ) as resp:
+                resp.raise_for_status()
+                self._consecutive_failures = 0
+                self._blocked_until = 0.0
+                for raw_line in resp.iter_lines():
+                    if not raw_line:
+                        continue
+                    try:
+                        data = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    token = data.get("response", "")
+                    if token:
+                        yield token
+                    if data.get("done"):
+                        break
+        except Exception as exc:  # noqa: BLE001
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= 3:
+                cooldown_seconds = min(300.0, 30.0 * self._consecutive_failures)
+                self._blocked_until = time.monotonic() + cooldown_seconds
+                logger.warning(
+                    "LLM circuit breaker opened after %d failures. cooldown_seconds=%.0f last_error=%s",
+                    self._consecutive_failures,
+                    cooldown_seconds,
+                    exc,
+                )
+            logger.warning("LLM stream request failed: %s", exc)
+            if context.strip():
+                yield self._fallback_from_context(query, context)
 
     def answer(self, query: str, context: str) -> str:
         if not self.enabled:

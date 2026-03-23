@@ -31,6 +31,11 @@ class QueryResponse(BaseModel):
     sources: list[SourceRef]
 
 
+class IngestRequest(BaseModel):
+    path: str
+    force: bool = False
+
+
 class IngestResponse(BaseModel):
     accepted: bool
     path: str
