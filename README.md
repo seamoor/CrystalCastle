@@ -144,6 +144,10 @@ Important keys:
 - `embedding.model_name`
 - `llm.enabled`, `llm.model`, `llm.timeout_seconds`
 - `query.strict_grounding` (currently default `false`)
+- `query.min_score` (ignore low-similarity retrieval hits)
+- `query.max_context_chars` (caps total context sent to LLM)
+- `query.rerank_enabled`, `query.rerank_top_n` (lexical+vector reranking)
+- `query.max_chunks_per_doc` (diversity guard; limits domination by one doc)
 
 ## Current Runtime Behavior
 

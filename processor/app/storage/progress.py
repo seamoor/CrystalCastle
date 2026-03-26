@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -23,7 +23,7 @@ class ProgressStore:
         self._jobs: dict[str, dict[str, Any]] = {}
 
     def start(self, doc_id: str, filename: str, path: str, file_type: str) -> None:
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             self._jobs[doc_id] = {
                 "doc_id": doc_id,
@@ -56,7 +56,7 @@ class ProgressStore:
             job["stage_progress"] = stage_progress
             job["details"] = details or {}
             job["overall_progress"] = self._overall_from_stage(stage, stage_progress, job.get("file_type", "media"))
-            job["updated_at"] = datetime.now(UTC).isoformat()
+            job["updated_at"] = datetime.now(timezone.utc).isoformat()
             return float(job["overall_progress"])
 
     def complete(self, doc_id: str, status: str, error: str | None = None) -> None:
@@ -67,7 +67,7 @@ class ProgressStore:
             job["status"] = status
             job["error"] = error
             job["overall_progress"] = 1.0 if status == "indexed" else job.get("overall_progress", 0.0)
-            job["updated_at"] = datetime.now(UTC).isoformat()
+            job["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     def all(self) -> list[dict[str, Any]]:
         with self._lock:

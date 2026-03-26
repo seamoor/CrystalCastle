@@ -45,6 +45,11 @@ class EmbeddingConfig(BaseModel):
 class QueryConfig(BaseModel):
     strict_grounding: bool = False
     extractive_max_snippets: int = 8
+    min_score: float = 0.25
+    max_context_chars: int = 12000
+    rerank_enabled: bool = True
+    rerank_top_n: int = 12
+    max_chunks_per_doc: int = 4
 
 
 class VisionConfig(BaseModel):
