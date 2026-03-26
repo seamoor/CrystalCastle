@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from qdrant_client import QdrantClient
@@ -72,7 +72,7 @@ class QdrantStore:
                     doc_id,
                     {
                         "filename": payload.get("filename", "unknown"),
-                        "indexed_at": payload.get("date_indexed", datetime.now(UTC).isoformat()),
+                        "indexed_at": payload.get("date_indexed", datetime.now(timezone.utc).isoformat()),
                         "duration_seconds": float(payload.get("duration_seconds", 0.0) or 0.0),
                     },
                 )

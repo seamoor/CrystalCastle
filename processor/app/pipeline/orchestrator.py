@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 
@@ -82,7 +82,7 @@ class PipelineOrchestrator:
             self.state_store.delete_by_path(file_path)
 
         doc_id = str(uuid.uuid4())
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         self.progress_store.start(doc_id, file_path.name, str(file_path), ext_type)
         logger.info(
             "Indexing started: doc_id=%s path=%s type=%s",

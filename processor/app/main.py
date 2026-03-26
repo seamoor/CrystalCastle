@@ -59,6 +59,11 @@ async def lifespan(_: FastAPI):
         orchestrator.llm,
         strict_grounding=cfg.query.strict_grounding,
         extractive_max_snippets=cfg.query.extractive_max_snippets,
+        min_score=cfg.query.min_score,
+        max_context_chars=cfg.query.max_context_chars,
+        rerank_enabled=cfg.query.rerank_enabled,
+        rerank_top_n=cfg.query.rerank_top_n,
+        max_chunks_per_doc=cfg.query.max_chunks_per_doc,
     )
     dashboard_service = DashboardService(orchestrator.qdrant, state_store)
 
